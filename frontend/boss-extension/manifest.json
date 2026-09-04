@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Resume Pro - BOSS直聘助手",
+  "version": "1.0.0",
+  "description": "一键导入 BOSS直聘职位描述到 Resume Pro 进行 AI 分析",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["http://localhost:8001/*", "https://www.zhipin.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.zhipin.com/*", "https://zhipin.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Resume Pro",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}

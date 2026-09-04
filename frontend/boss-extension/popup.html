@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 240px;
+  padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #ffffff;
+}
+h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0a0a0a;
+  margin-bottom: 4px;
+}
+h1 span { color: #1456f0; }
+p {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #222;
+  margin-bottom: 16px;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #059669;
+}
+.btn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: #1456f0;
+  color: white;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+.btn:hover { background: #1245cc; }
+.hint {
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: 12px;
+}
+</style>
+</head>
+<body>
+  <h1>Resume <span>Pro</span></h1>
+  <p>在 BOSS直聘 职位页面使用"导入到 Resume Pro"按钮一键分析。</p>
+  <div class="status">
+    <span class="status-dot"></span>
+    <span id="statusText">正在检测后端连接...</span>
+  </div>
+  <a class="btn" href="http://localhost:5173" target="_blank">打开 Resume Pro</a>
+  <div class="hint">导入后自动跳转到 JD 分析页</div>
+  <script src="popup.js"></script>
+</body>
+</html>

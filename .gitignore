@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+.gstack/
+
+# Runtime logs
+logs/
+backend/logs/
+*.log
+
+# Claude Code local config
+.claude/
+
+# Playwright generated artifacts
+frontend/test-results/
+frontend/e2e-report/
+frontend/playwright-report/
+
+# 项目无关的草稿/本地工具（已从版本库移除，磁盘保留）
+/开始面试 — 设计探索.html
+/Mock Interview — Design Canvas.html
+/Mock Interview — 数据驱动.html
+/check_code.py
+/kill_port.py
+/test_deepseek.py
+/start.bat
+/stop.bat
+/vision.js
+/backend/search.js
+/backend/smoke_topic_id.txt
