@@ -43,22 +43,24 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
         # Migrate: add new columns to mock_interviews if missing
+        # 只吞 "duplicate column" 这一种 OperationalError；写错表名/库被锁等真问题必须炸出来
         from sqlalchemy import text
+        from sqlalchemy.exc import OperationalError
         try:
             await conn.execute(text(
                 "ALTER TABLE mock_interviews ADD COLUMN interview_type VARCHAR(20) DEFAULT 'comprehensive'"
             ))
-        except Exception:
+        except OperationalError:
             pass  # column already exists
         try:
             await conn.execute(text(
                 "ALTER TABLE mock_interviews ADD COLUMN difficulty_level VARCHAR(10) DEFAULT 'mid'"
             ))
-        except Exception:
+        except OperationalError:
             pass  # column already exists
         try:
             await conn.execute(text(
                 "ALTER TABLE feynman_topics ADD COLUMN weak_points TEXT"
             ))
-        except Exception:
+        except OperationalError:
             pass  # column already exists

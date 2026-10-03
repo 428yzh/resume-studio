@@ -23,11 +23,6 @@ class GenerateQuestionsRequest(BaseModel):
     counts: dict = {"single_choice": 5, "multi_choice": 5, "essay": 2}
 
 
-class GenerateExamRequest(BaseModel):
-    jd_analysis_id: Optional[int] = None
-    skill_ids: list[int] = []
-
-
 class CreateSessionRequest(BaseModel):
     mode: str
     question_ids: list[int]

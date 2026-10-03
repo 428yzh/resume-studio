@@ -18,6 +18,18 @@ def event_loop():
     loop.close()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _detach_audit_file_handler():
+    """audit.py 在 import 时就往 logs/ai_audit.log 挂了 RotatingFileHandler，
+    测试跑 AI 调用会把 mock 假数据写进生产日志。测试期间摘掉，跑完还回去
+    （test_ai_audit 自己挂 _Capture handler，不受影响）。"""
+    from app.services import audit
+    saved = list(audit.logger.handlers)
+    audit.logger.handlers = []
+    yield
+    audit.logger.handlers = saved
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_session():
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
