@@ -46,6 +46,19 @@ def _session_to_dict(s: QuizSession) -> dict:
     }
 
 
+def _skill_context(s) -> str:
+    """技能名 + 备注，作为出题的唯一技能语境。
+
+    只给名字时歧义词只能瞎猜：技能名「harness」可能被出成 Harness.io 的 CI/CD，
+    而用户要学的是 Agent Harness。备注是「这个技能具体指什么」的专用字段、用户手写，
+    也是新增技能时的必填项。
+    不带 category：它不可靠（新建表单默认值是「前端」，实测 12 条里 5 条是错的默认值），
+    当判据用会把 AI 带偏。不带 source：只是来源标记，对消歧无帮助。
+    """
+    notes = (s.notes or "").strip()
+    return f"{s.name}（{notes}）" if notes else s.name
+
+
 def _answer_to_dict(a: QuizAnswer) -> dict:
     return {
         "id": a.id,
@@ -70,14 +83,14 @@ async def generate_questions(data: GenerateQuestionsRequest, db: AsyncSession = 
     else:
         counts = data.counts
 
-    # Get skill names if skill_ids are provided
+    # Get skill context if skill_ids are provided
     skill_names = []
     if data.skill_ids:
         from app.models.skill import Skill
         skill_result = await db.execute(
             select(Skill).where(Skill.id.in_(data.skill_ids))
         )
-        skill_names = [s.name for s in skill_result.scalars().all()]
+        skill_names = [_skill_context(s) for s in skill_result.scalars().all()]
         if not skill_names:
             skill_names = [f"skill_{sid}" for sid in data.skill_ids]
 

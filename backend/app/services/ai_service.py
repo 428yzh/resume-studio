@@ -946,6 +946,9 @@ async def explain_topic(
                             url = h.get("url", "").strip()
                             if title and url:
                                 search_hits.append(f"- [{title}]({url})")
+                    else:
+                        # 搜不到时下面会退回「AI 凭空编链接」，必须留痕，否则整条链路静默劣化没人发现
+                        logger.warning(f"WebSearch 无结果 (rc={proc.returncode}): {proc.stderr.strip()[:200]}")
                 except Exception as e:
                     logger.warning(f"WebSearch 搜索失败: {e}")
 
@@ -1060,16 +1063,6 @@ def _default_jd_analysis(jd_text: str) -> dict:
     }
 
 
-def _default_learning_guide(tech_name: str) -> dict:
-    return {
-        "learning_path": [
-            {"step": 1, "title": f"{tech_name} 入门", "description": "AI 服务未配置，请设置 DEEPSEEK_API_KEY", "estimated_hours": 0}
-        ],
-        "resources": [],
-        "interview_questions": [],
-    }
-
-
 async def parse_resume_from_text(text: str) -> dict:
     """AI 解析简历文本为结构化 sections 数据"""
     client = _get_client()
@@ -1163,6 +1156,7 @@ async def generate_quiz_questions(
 - 选择题选项要有迷惑性
 - 问答题附带评分要点作为 correct_answer
 - 每题标注 type (single_choice/multi_choice/essay)
+- 技能名可能一词多义（如 harness 既可能是 Agent Harness，也可能是 Harness.io CI/CD）：必须先读技能后面括号里的备注，按备注确定所指的具体技术再出题，不要按字面联想
 
 返回格式：
 [
@@ -1184,7 +1178,8 @@ async def generate_quiz_questions(
 
     user_prompt = f"面试模式：{'模拟面试' if mode == 'exam' else '刷题练习'}\n"
     if skill_names:
-        user_prompt += f"涉及技能：{', '.join(skill_names)}\n"
+        # 逐行列：每项可能带「分类/说明」，逗号拼一行会糊成一团
+        user_prompt += "涉及技能：\n" + "\n".join(f"- {s}" for s in skill_names) + "\n"
     if jd_analysis_id:
         user_prompt += f"关联 JD 分析记录 ID：{jd_analysis_id}\n"
     user_prompt += "\n请生成题目。"
