@@ -26,6 +26,18 @@ export interface KnowledgeGraph {
   issues: string[];
 }
 
+/** 取出图谱里 id 命中的节点（含各自子树），保持原顺序。单元能覆盖多个顶层节点（了解档会合并）。
+ *  镜像后端 `_find_nodes` —— 前端要靠它把单元分到的那块挑出来渲染深入讲解入口。 */
+export function findNodes(nodes: GraphNode[], ids: string[]): GraphNode[] {
+  const want = new Set(ids);
+  const out: GraphNode[] = [];
+  for (const n of nodes) {
+    if (want.has(n.id)) out.push(n);
+    else out.push(...findNodes(n.children, ids));
+  }
+  return out;
+}
+
 export interface SkillCreate {
   name: string;
   category?: string;

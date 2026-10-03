@@ -205,3 +205,68 @@ async def test_plan_endpoint_requires_graph(client, monkeypatch):
         assert (await client.get(f"/api/skills/{skill_id}/learning-plan")).json()["required_level"] == "精通"
     finally:
         await client.delete(f"/api/skills/{skill_id}")
+
+
+# ─── 单元的内容边界（TC-BLOCK，结论 10）──────────────────
+from app.services.ai_service import _find_nodes  # noqa: E402
+
+
+def test_find_nodes_takes_subtree_with_children():
+    """命中top节点要连子树一起取 —— 单元概述要讲的是整块，不是节点标题一行"""
+    graph = _assign_ids(_ok_graph(top=4, kids=2))
+    hit = _find_nodes(graph, {"2"})
+    assert [n["id"] for n in hit] == ["2"]
+    assert [c["id"] for c in hit[0]["children"]] == ["2.1", "2.2"]
+
+
+def test_find_nodes_multiple_ids_keep_original_order():
+    """了解档一个单元会合并相邻顶层节点，顺序按图谱来、不按调用方给的顺序"""
+    graph = _assign_ids(_ok_graph(top=4, kids=2))
+    hit = _find_nodes(graph, {"3", "1"})
+    assert [n["id"] for n in hit] == ["1", "3"]
+
+
+def test_find_nodes_reaches_second_level():
+    """点深入讲解入口传的是子节点 id，得能在第二层命中"""
+    graph = _assign_ids(_ok_graph(top=3, kids=2))
+    hit = _find_nodes(graph, {"2.1"})
+    assert len(hit) == 1 and hit[0]["title"] == "t1k0"  # 第 2 个 top 的第 1 个孩子
+
+
+def test_find_nodes_missing_id_is_empty_and_junk_safe():
+    graph = _assign_ids(_ok_graph(top=2, kids=2))
+    assert _find_nodes(graph, {"9.9"}) == []
+    assert _find_nodes(["垃圾", {"id": "1", "title": "真", "children": []}], {"1"})[0]["title"] == "真"
+
+
+@pytest.mark.asyncio
+async def test_explain_topic_endpoint_renders_block_from_graph(client, monkeypatch):
+    """端点自己从技能图谱里取块 —— 前端只报 id，缩进格式归后端一处"""
+    resp = await client.post("/api/skills", json={"name": "TC-BLOCK 临时技能", "notes": "测试用"})
+    skill_id = resp.json()["id"]
+    try:
+        async def fake_graph(name, notes=""):
+            return {"nodes": _assign_ids(_ok_graph(top=4, kids=2)), "degraded": False, "issues": []}
+
+        monkeypatch.setattr("app.api.skills.generate_knowledge_graph", fake_graph)
+        await client.post(f"/api/skills/{skill_id}/graph")
+
+        seen: dict = {}
+
+        async def fake_explain(**kw):
+            seen.update(kw)
+            return {"explanation": "## x", "topic_keywords": []}
+
+        monkeypatch.setattr("app.api.ai.explain_topic", fake_explain)
+        body = {"skill_name": "临时", "step_title": "单元", "skill_id": skill_id, "node_ids": ["2", "3"]}
+        await client.post("/api/ai/explain-topic", json=body)
+
+        block = seen["graph_block"]
+        assert [ln.strip().split("  ")[0] for ln in block.splitlines()] == ["2", "2.1", "2.2", "3", "3.1", "3.2"]
+        assert block.splitlines()[1].startswith("  ")  # 层级靠缩进
+
+        # 不报 id（旧计划）→ 没有块，退回自由发挥
+        await client.post("/api/ai/explain-topic", json={**body, "node_ids": []})
+        assert seen["graph_block"] == ""
+    finally:
+        await client.delete(f"/api/skills/{skill_id}")

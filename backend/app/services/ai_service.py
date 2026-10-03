@@ -637,8 +637,12 @@ async def explain_topic(
     step_type: str = "concept",
     required_level: str = "了解",
     learner_background: str = "",
+    graph_block: str = "",
 ) -> str:
-    """AI 讲解知识点（按 step_type 切换内容框架），推荐来自中文社区的学习资源"""
+    """AI 讲解知识点（按 step_type 切换内容框架），推荐来自中文社区的学习资源
+
+    `graph_block` 是该单元分到的图谱块（结论 10），有值时把内容边界钉死在块内。
+    """
     client = _get_client()
     if not client:
         return f"### {step_title or topic}\n\nAI 服务未配置，请设置 DEEPSEEK_API_KEY"
@@ -915,6 +919,17 @@ async def explain_topic(
         prompts = prompt_map.get(step_type, prompt_map["concept"])
         system_prompt = prompts["template"].format(required_level=required_level)
 
+        # 单元概述的内容边界（结论 10）：把这块图谱交给 AI，通知它「讲什么」由图谱定，
+        # 不再靠它从步骤标题自由联想。追加而不是改 5 个模板 —— 边界是共用的，不该复制 5 份。
+        if graph_block:
+            system_prompt += f"""
+
+【本单元覆盖的图谱块 · 内容边界】
+{graph_block}
+
+上面每个节点都必须在本单元讲到。这是本单元的**全部**范围 —— 块外的内容不要展开，
+那是别的单元的地盘。块内先讲谁后讲谁，由你按依赖关系判断。"""
+
         # 走评审管线：资深讲师 + 模拟用户双评审，反馈注入后重新生成
         gen = Agent("知识点讲解", system_prompt)
         content, _ = await review_pipeline(
@@ -1118,6 +1133,22 @@ def _assign_ids(nodes: list, prefix: str = "") -> list[dict]:
             "title": str(n.get("title", "")).strip(),
             "children": _assign_ids([k for k in (n.get("children") or []) if isinstance(k, dict)], nid),
         })
+    return out
+
+
+def _find_nodes(nodes: list, ids: set[str]) -> list:
+    """取出图谱里 id 命中的节点（含各自子树），保持原顺序。
+
+    单元切分时一个单元能覆盖多个顶层节点（了解档会合并），所以是复数。
+    """
+    out = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        if n.get("id") in ids:
+            out.append(n)
+        else:
+            out.extend(_find_nodes(n.get("children") or [], ids))
     return out
 
 

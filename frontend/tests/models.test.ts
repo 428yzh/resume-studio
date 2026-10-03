@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Resume } from "../core/models/resume";
 import type { ResumeTemplate } from "../core/models/template";
-import type { Skill } from "../core/models/skill";
+import { findNodes, type Skill, type GraphNode } from "../core/models/skill";
 import type { JDAnalysis } from "../core/models/jd";
 
 describe("TC-MODEL-001: Resume interface", () => {
@@ -74,5 +74,28 @@ describe("TC-MODEL-004: JDAnalysis interface", () => {
     };
     expect(analysis.tech_stack.length).toBe(1);
     expect(analysis.tech_stack[0].name).toBe("React");
+  });
+});
+
+describe("TC-MODEL-005: findNodes 从图谱里取单元分到的那块", () => {
+  const n = (id: string, ...kids: GraphNode[]): GraphNode => ({ id, title: `t${id}`, children: kids });
+  const graph = [n("1", n("1.1"), n("1.2")), n("2", n("2.1"), n("2.2")), n("3")];
+
+  it("命中顶层节点要连子树一起取", () => {
+    const hit = findNodes(graph, ["2"]);
+    expect(hit.map((h) => h.id)).toEqual(["2"]);
+    expect(hit[0].children.map((c) => c.id)).toEqual(["2.1", "2.2"]);
+  });
+
+  it("多个 id（了解档合并单元）按图谱顺序返回，不按入参顺序", () => {
+    expect(findNodes(graph, ["3", "1"]).map((h) => h.id)).toEqual(["1", "3"]);
+  });
+
+  it("能在第二层命中（深入讲解入口传的是子节点 id）", () => {
+    expect(findNodes(graph, ["1.2"]).map((h) => h.id)).toEqual(["1.2"]);
+  });
+
+  it("找不到是空数组，不是 undefined", () => {
+    expect(findNodes(graph, ["9.9"])).toEqual([]);
   });
 });

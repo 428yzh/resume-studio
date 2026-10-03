@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.connection import get_db
 from app.models.skill import Skill
-from app.services.ai_service import polish_resume, polish_resume_stream, generate_learning_guide, explain_topic, generate_cornell_prompts
+from app.services.ai_service import polish_resume, polish_resume_stream, generate_learning_guide, explain_topic, generate_cornell_prompts, _find_nodes, _render_graph_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,9 @@ class ExplainTopicRequest(BaseModel):
     step_type: str = "concept"
     required_level: str = "了解"
     skill_id: int | None = None  # 查学习者背景（技能熟练度 + 现状理解）供模拟用户评审代入
+    # 这个单元/知识点覆盖的图谱节点 id。单元概述传 step.node_ids（可多个，了解档会合并），
+    # 深入讲解传单个子节点 id。服务端据此从技能图谱里取出那块当内容边界（结论 10）
+    node_ids: list[str] = []
 
 
 class CornellPromptsRequest(BaseModel):
@@ -80,6 +83,7 @@ async def explain_topic_endpoint(data: ExplainTopicRequest, db: AsyncSession = D
     try:
         # 学习者背景：技能熟练度 + 生成学习计划时填的现状理解，供模拟用户以「当前掌握度」身份评审
         learner_background = ""
+        graph_block = ""
         if data.skill_id:
             result = await db.execute(select(Skill).where(Skill.id == data.skill_id))
             skill = result.scalar_one_or_none()
@@ -94,6 +98,14 @@ async def explain_topic_endpoint(data: ExplainTopicRequest, db: AsyncSession = D
                     except Exception:
                         pass
                 learner_background = "；".join(parts)
+                # 图谱块在服务端取，前端只报 id —— 渲染格式归后端一处，免得两边各写一套缩进
+                if data.node_ids and skill.knowledge_graph:
+                    try:
+                        nodes = json.loads(skill.knowledge_graph)["nodes"]
+                        hit = _find_nodes(nodes, set(data.node_ids))
+                        graph_block = _render_graph_for_prompt(hit)
+                    except Exception as e:
+                        logger.warning(f"渲染图谱块失败，按无块降级: {e}")
         result = await explain_topic(
             skill_name=data.skill_name,
             step_title=data.step_title,
@@ -102,6 +114,7 @@ async def explain_topic_endpoint(data: ExplainTopicRequest, db: AsyncSession = D
             step_type=data.step_type,
             required_level=data.required_level,
             learner_background=learner_background,
+            graph_block=graph_block,
         )
         # explain_topic 已返回 {explanation, topic_keywords}（单元概述带知识点关键词，深入讲解为空数组）
         return result

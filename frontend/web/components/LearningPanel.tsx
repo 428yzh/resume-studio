@@ -4,6 +4,7 @@ import FloatingNote from "./FloatingNote";
 import HighlightableMarkdown from "./HighlightableMarkdown";
 import { contentHighlightKey } from "@core/services/highlights";
 import { isUnavailable } from "@core/services/aiDegrade";
+import type { GraphNode } from "@core/models/skill";
 import AIErrorBox from "./AIErrorBox";
 
 interface StepData {
@@ -12,6 +13,8 @@ interface StepData {
   topics: string[];
   stepNumber: number;
   estimated_hours: number;
+  /** 这个单元覆盖的图谱顶层节点 id（② 之后生成的计划才有，旧计划没有） */
+  nodeIds?: string[];
 }
 
 interface LearningPanelProps {
@@ -23,6 +26,15 @@ interface LearningPanelProps {
   step: StepData;
   requiredLevel: string;
   stepType?: string;
+  /** 本单元分到的图谱块（含子树）。空数组 = 没图谱，退回 AI 自产关键词那套 */
+  block?: GraphNode[];
+}
+
+/** 深入讲解入口：有图谱块就用块的下一层（结论 10「往下再拆一层」），否则用 AI 关键词 */
+interface TopicEntry {
+  title: string;
+  /** 图谱节点的 id，点了要把它交给后端当内容边界；AI 关键词没有 */
+  nodeId?: string;
 }
 
 /* ─── Cornell shape ─── */
@@ -101,6 +113,7 @@ export default function LearningPanel({
   step,
   requiredLevel,
   stepType,
+  block = [],
 }: LearningPanelProps) {
   /* ── AI explanation (cached) ── */
   const [explanation, setExplanation] = useState("");
@@ -112,8 +125,19 @@ export default function LearningPanel({
   const [topicAnswers, setTopicAnswers] = useState<Record<string, string>>({});
   const [topicLoading, setTopicLoading] = useState<Record<string, boolean>>({});
 
-  /* ── 单元概述返回的知识点关键词（动态驱动深入讲解按钮，不再用学习计划的 topics） ── */
+  /* ── 单元概述返回的知识点关键词（无图谱时驱动深入讲解按钮，不再用学习计划的 topics） ── */
   const [topicKeywords, setTopicKeywords] = useState<string[]>([]);
+
+  /* 深入讲解入口。有图谱块就取块的下一层 —— 这是「往下再拆一层」的落点，
+     且每个入口都带节点 id，点进去的内容边界由后端按同一棵树渲染。
+     没图谱（旧计划）退回 AI 从概述里自产的关键词。 */
+  const topicEntries: TopicEntry[] = useMemo(
+    () =>
+      block.length
+        ? block.flatMap((n) => n.children.map((c) => ({ title: c.title, nodeId: c.id })))
+        : topicKeywords.map((t) => ({ title: t })),
+    [block, topicKeywords]
+  );
 
 
   /* ── Cornell ── */
@@ -250,7 +274,7 @@ export default function LearningPanel({
   }, [visible]);
 
   /* ── Ask topic ── */
-  const askTopic = (topic: string) => {
+  const askTopic = (topic: string, nodeId?: string) => {
     setActiveTopic(topic);
     try { localStorage.setItem(aKey, topic); } catch { /* ignore */ }
     // 已有正常答案或正在加载则跳过；错误占位允许重试
@@ -266,6 +290,8 @@ export default function LearningPanel({
       step_type: stepType || "concept",
       required_level: requiredLevel,
       skill_id: skillId,
+      // 点图谱节点进来时，把该节点的子树交给后端当内容边界（结论 10）
+      node_ids: nodeId ? [nodeId] : [],
     }).then((data) => {
       const content = data.explanation || "";
       if (isUnavailable(content)) {
@@ -309,6 +335,7 @@ export default function LearningPanel({
       step_type: stepType || "concept",
       required_level: requiredLevel,
       skill_id: skillId,
+      node_ids: step.nodeIds ?? [],
     }).then((data) => {
       const content = data.explanation || "";
       if (isUnavailable(content)) {
@@ -330,7 +357,7 @@ export default function LearningPanel({
     }).finally(() => {
       explanationFetching.current = null;
     });
-  }, [skillName, step.title, step.description, stepType, requiredLevel, eKey, tkKey]);
+  }, [skillName, step.title, step.description, step.nodeIds, stepType, requiredLevel, eKey, tkKey]);
 
   /* 重新生成单元概述：清缓存 + 重新请求（缓存命中会永远显示旧内容，必须显式清除） */
   const handleRegenerateExplanation = () => {
@@ -546,18 +573,18 @@ export default function LearningPanel({
               )}
             </section>
 
-            {/* ══════ Topic shortcuts（关键词来自单元概述生成，动态渲染深入讲解按钮） ══════ */}
-            {topicKeywords.length > 0 && (
+            {/* ══════ Topic shortcuts（有图谱用块的下一层，无图谱用概述自产的关键词） ══════ */}
+            {topicEntries.length > 0 && (
               <section>
                 <h4 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">想深入了解哪个知识点？</h4>
                 <div className="flex flex-wrap gap-2">
-                  {topicKeywords.map((t, i) => {
+                  {topicEntries.map(({ title: t, nodeId }, i) => {
                     const cached = !!topicAnswers[t] && topicAnswers[t] !== TOPIC_UNAVAILABLE;
                     const loading = !!topicLoading[t];
                     return (
                       <button
                         key={i}
-                        onClick={() => askTopic(t)}
+                        onClick={() => askTopic(t, nodeId)}
                         className={`text-xs rounded-full px-3 py-1.5 font-medium transition-all border flex items-center gap-1 ${
                           activeTopic === t
                             ? "bg-blue text-white border-blue"

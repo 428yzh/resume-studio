@@ -39,7 +39,7 @@
 | PDF | @react-pdf/renderer v4 | A4 简历 + 试题导出。**必须走 `NotoSansSC` 字体**，见下方「PDF 中文字体」 |
 | 状态管理 | Zustand v5 | 零 DOM 依赖 |
 | 数据库 | SQLite + aiosqlite | 异步，无需额外部署 |
-| 测试 | pytest + httpx + vitest + Playwright | 后端 105 / 前端 51 / E2E 8 |
+| 测试 | pytest + httpx + vitest + Playwright | 后端 110 / 前端 55 / E2E 8 |
 
 ## 架构
 
@@ -290,7 +290,8 @@ DELETE /api/skills/:id/questions/:qid   → 删除面试题
 # AI
 POST   /api/ai/polish                   → 全文润色
 POST   /api/ai/polish/stream            → 流式润色 (SSE)
-POST   /api/ai/explain-topic            → 知识点讲解 / 单元概述
+POST   /api/ai/explain-topic            → 知识点讲解 / 单元概述（`node_ids` → 服务端从技能图谱取
+                                            那块当内容边界，块外不展开；不报 id 退回自由发挥）
 POST   /api/ai/cornell-prompts          → 康奈尔笔记线索提示
 POST   /api/ai/learning-guide           → 生成学习指引（走多 Agent 评审管线）
 
@@ -481,11 +482,11 @@ require("fontkit").openSync("frontend/public/fonts/NotoSansSC-Regular.woff").has
 
 ## 测试体系
 
-详见 `tests/TEST_PLAN.md`。当前 **164 tests**（后端 105 + 前端 51 + E2E 8）。
+详见 `tests/TEST_PLAN.md`。当前 **173 tests**（后端 110 + 前端 55 + E2E 8）。
 
 **覆盖盲区（已知，待补）**：
 - 后端 `quiz.py` 全部 8 个 endpoint、`mock_interview.py` 全部 6 个 endpoint **零测试**
-- 后端 `ai.py` 的 polish / polish/stream / explain-topic / cornell-prompts、`resumes` 的 import-pdf **零测试**（`skills` 的 learning-plan 已由 TC-PLAN 覆盖到端点层）
+- 后端 `ai.py` 的 polish / polish/stream / cornell-prompts、`resumes` 的 import-pdf **零测试**（`explain-topic` 的图谱块已由 TC-BLOCK 覆盖到端点层，`skills` 的 learning-plan 已由 TC-PLAN 覆盖）
 - 前端 `quizStore` / `interviewStore` **零单测**（tests/ 只覆盖 resume/skill/job/feynman 四个 store）
 - E2E `navigation.spec.ts` 名为 "all pages"，实际只点了 3 个导航项
 
@@ -546,8 +547,8 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 
 | 模块 | 进度 | 测试 |
 |------|------|------|
-| **后端 API** | 100% | 105/105 ✅ |
-| **前端 core 层** | 100% | 51/51 ✅ |
+| **后端 API** | 100% | 110/110 ✅ |
+| **前端 core 层** | 100% | 55/55 ✅ |
 | **前端 UI 层** | 100% | — |
 | **E2E 测试** | 部分 | 8/8 ✅（仅覆盖 3/6 导航） |
 | **部署 (Docker)** | 100% | — |

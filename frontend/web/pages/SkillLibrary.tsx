@@ -6,7 +6,7 @@ import ConfirmDialog from "@web/components/ConfirmDialog";
 import LearningPanel from "@web/components/LearningPanel";
 import { GridIcon } from "@web/components/EmptyIcons";
 import { api } from "@core/api/client";
-import type { Skill, GraphNode } from "@core/models/skill";
+import { findNodes, type Skill, type GraphNode } from "@core/models/skill";
 import type { Question } from "@core/models/quiz";
 import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { calculateAllStepScores, calculateStepScore, loadCornellFromStorage } from "@core/services/scoring";
@@ -95,8 +95,10 @@ export default function SkillLibrary() {
     open: boolean;
     skillId: number;
     skillName: string;
-    step: { title: string; description: string; topics: string[]; stepNumber: number; estimated_hours: number; type?: string };
+    step: { title: string; description: string; topics: string[]; stepNumber: number; estimated_hours: number; type?: string; nodeIds?: string[] };
     requiredLevel: string;
+    /** 本单元分到的图谱块，从展开技能时拉到的树里切出来 */
+    block: GraphNode[];
   } | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Record<number, Record<number, boolean>>>({});
   const [stepScores, setStepScores] = useState<Record<number, Record<number, number>>>({});
@@ -933,8 +935,13 @@ export default function SkillLibrary() {
                                                 stepNumber: step.step,
                                                 estimated_hours: step.estimated_hours,
                                                 type: step.type,
+                                                nodeIds: step.node_ids,
                                               },
                                               requiredLevel: learningPlan.required_level,
+                                              // 单元分到的那块：step.node_ids 去图谱里取子树
+                                              block: step.node_ids?.length && ownGraph
+                                                ? findNodes(ownGraph.nodes, step.node_ids)
+                                                : [],
                                             });
                                           }
                                         }}
@@ -1139,6 +1146,7 @@ export default function SkillLibrary() {
           step={learningPanel.step}
           requiredLevel={learningPanel.requiredLevel}
           stepType={learningPanel.step.type}
+          block={learningPanel.block}
           onClose={() => {
             // Cornell 笔记完成度只在前端本地算分展示，不落库。
             // 停掉的 /proficiency-from-steps 曾把笔记字数启发式当成自评写进 skill.proficiency。

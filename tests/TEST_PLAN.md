@@ -94,6 +94,13 @@ tests/
 - TC-PLAN-006: `_render_graph_for_prompt` 带 id 缩进渲染（切分依据是 id，id 必须进 prompt）
 - TC-PLAN-007: 端点 —— 无图谱 409；有图谱时把树传给切分函数并落库
 
+### TC-BLOCK 系列（单元的内容边界，结论 10）
+- TC-BLOCK-001: `_find_nodes` 命中顶层节点时连子树一起取（单元概述要讲的是整块）
+- TC-BLOCK-002: 多个 id 按图谱顺序返回，不按入参顺序（了解档合并单元）
+- TC-BLOCK-003: 能在第二层命中（深入讲解入口传的是子节点 id）
+- TC-BLOCK-004: 找不到返回空数组；非 dict 节点不炸
+- TC-BLOCK-005: 端点自己从技能图谱取块（前端只报 id）—— 缩进/id 顺序正确；不报 id 时 `graph_block` 为空，退回自由发挥
+
 ### TC-JOB 系列（岗位推荐）
 - TC-JOB-001: GET /api/jobs 无数据时返回空列表
 - TC-JOB-002: POST /api/jobs/refresh 搜索失败时保留旧岗位
@@ -144,6 +151,7 @@ tests/
 - TC-MODEL-002: Template 接口结构正确
 - TC-MODEL-003: Skill 接口结构正确
 - TC-MODEL-004: JDAnalysis 接口结构正确
+- TC-MODEL-005: `findNodes` 从图谱取单元分到的那块 —— 带子树 / 按图谱顺序 / 二层命中 / 找不到是空数组（镜像后端 `_find_nodes`）
 
 ### TC-STORE 系列
 - TC-STORE-RESUME-001: ResumeStore 创建简历
