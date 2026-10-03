@@ -1,0 +1,1357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>技能库 · 页面导航重构设计 — Resume Pro</title>
+<!--
+  ============================================================================
+  设计系统声明（地面真值：DESIGN.md + frontend/src/index.css @theme）
+  ============================================================================
+  1. 白底黑字，干净简约。页面底 surface，卡片底 canvas。
+  2. 全扁平化：卡片一律 1px solid hairline 描边，禁止用 box-shadow 做卡片。
+     允许极轻的 hover（surface 底色变化），弹层除外。
+  3. 全 pill 按钮：所有按钮 border-radius: 9999px。
+     主按钮 bg-blue text-white；次按钮透明底 + hairline 描边。
+  4. 禁止：渐变背景、emoji、圆角卡片配左侧色条（left-border accent stripe）、
+     用 SVG 画插画冒充真实素材、lorem ipsum 假文案。
+  5. 中文字体回退系统无衬线（"PingFang SC" / "Microsoft YaHei"），
+     DM Sans 无中文字形。不外链任何字体 / 图片。
+  6. 类型尺度 12 辅助 / 14 正文 / 16 强调 / 24 页面标题；
+     正文 line-height 1.7，text-wrap: pretty。
+  7. 间距基数 4px：8 / 12 / 16 / 20 / 24 / 32。圆角 6 / 8 / 12 / 16 / 24 / 9999。
+  8. 数据展示允许 40 / 28 两个数字专用字号（仅数字，不用于文案）。
+  本文件是纯设计交付物（静态 HTML + 原生 CSS），不接入生产代码。
+  ============================================================================
+-->
+<style>
+  :root{
+    --canvas: oklch(99.5% 0.002 250);
+    --surface: oklch(96% 0.005 250);
+    --hairline: oklch(91% 0.008 250);
+    --ink: oklch(12% 0.005 250);
+    --charcoal: oklch(25% 0.008 250);
+    --slate: oklch(40% 0.015 250);
+    --muted: oklch(65% 0.015 250);
+    --blue: oklch(55% 0.18 260);
+    --blue-light: oklch(88% 0.06 250);
+    --green: oklch(55% 0.14 160);
+    --green-light: oklch(90% 0.04 160);
+    --amber: oklch(65% 0.14 80);
+    --amber-light: oklch(92% 0.04 80);
+    --red: oklch(55% 0.18 30);
+    --red-light: oklch(90% 0.05 30);
+    --font: "DM Sans","Inter",ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+    --mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px; --r-2xl:24px;
+  }
+  *{ box-sizing:border-box; }
+  html{ -webkit-text-size-adjust:100%; }
+  body{
+    margin:0;
+    background:var(--surface);
+    color:var(--charcoal);
+    font-family:var(--font);
+    font-size:14px;
+    line-height:1.7;
+    text-wrap:pretty;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{ color:var(--ink); margin:0; font-weight:600; line-height:1.35; text-wrap:pretty; }
+  p{ margin:0; }
+  a{ color:var(--blue); }
+  code,.mono{ font-family:var(--mono); font-size:12px; }
+  .num{ font-variant-numeric:tabular-nums; }
+
+  /* ---------- 布局 ---------- */
+  .wrap{ max-width:1280px; margin:0 auto; padding:0 32px 96px; }
+  .sec{ margin-top:72px; }
+  .sec-h{ display:flex; gap:14px; align-items:flex-start; margin-bottom:24px; }
+  .sec-idx{
+    font-family:var(--mono); font-size:12px; color:var(--blue);
+    background:var(--blue-light); border-radius:9999px; padding:3px 12px; white-space:nowrap;
+    margin-top:2px; font-weight:600;
+  }
+  .sec-h h2{ font-size:24px; letter-spacing:-0.01em; }
+  .sec-desc{ color:var(--slate); font-size:14px; margin-top:4px; max-width:820px; }
+  .grid2{ display:grid; grid-template-columns:minmax(0,1.68fr) minmax(0,1fr); gap:24px; align-items:start; }
+  .gridchart{ display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:28px; align-items:start; }
+  .gridl1{ display:grid; grid-template-columns:minmax(0,1.55fr) minmax(0,1fr); gap:24px; align-items:start; }
+  .grid3{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
+
+  /* ---------- 基础件 ---------- */
+  .card{ background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg); padding:24px; }
+  .card-t{ font-size:16px; font-weight:600; color:var(--ink); }
+  .kicker{ font-size:12px; color:var(--muted); letter-spacing:.04em; }
+  .small{ font-size:12px; color:var(--muted); line-height:1.6; }
+  .sub{ font-size:13px; color:var(--slate); }
+  .pill{
+    display:inline-flex; align-items:center; gap:6px; border-radius:9999px;
+    border:1px solid var(--hairline); background:transparent; color:var(--ink);
+    font-size:13px; font-weight:600; padding:7px 16px; white-space:nowrap;
+  }
+  .pill-blue{ background:var(--blue); border-color:var(--blue); color:#fff; }
+  .pill-sm{ font-size:12px; padding:4px 12px; font-weight:600; }
+  .chip{
+    display:inline-flex; align-items:center; gap:5px; border-radius:9999px;
+    font-size:12px; font-weight:600; padding:2px 10px; white-space:nowrap;
+    font-variant-numeric:tabular-nums;
+  }
+  .chip-red{ background:var(--red-light); color:var(--red); }
+  .chip-amber{ background:var(--amber-light); color:var(--amber); }
+  .chip-green{ background:var(--green-light); color:var(--green); }
+  .chip-blue{ background:var(--blue-light); color:var(--blue); }
+  .chip-neutral{ background:var(--surface); color:var(--slate); }
+  .chip-ghost{ background:transparent; color:var(--muted); border:1px dashed var(--hairline); }
+  .rule{ height:1px; background:var(--hairline); border:0; margin:20px 0; }
+  .annot{
+    border:1px dashed var(--hairline); border-radius:var(--r-md); background:var(--surface);
+    color:var(--muted); font-size:12px; line-height:1.6; padding:10px 14px;
+  }
+  .annot b{ color:var(--slate); font-weight:600; }
+
+  /* ---------- 顶栏：设计系统声明 ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:50;
+    background:var(--canvas); border-bottom:1px solid var(--hairline);
+  }
+  .topbar-in{
+    max-width:1280px; margin:0 auto; padding:9px 32px;
+    display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px;
+    font-size:12px; color:var(--muted);
+  }
+  .topbar-in .lbl{ color:var(--ink); font-weight:600; }
+  .topbar-in .dot{ color:var(--hairline); }
+
+  /* ---------- 封面 ---------- */
+  .hero{ padding:56px 0 0; }
+  .eyebrow{ font-family:var(--mono); font-size:12px; color:var(--blue); letter-spacing:.06em; }
+  .hero h1{ font-size:38px; letter-spacing:-0.02em; margin:12px 0 0; line-height:1.25; }
+  .hero .lede{ font-size:16px; color:var(--slate); margin-top:14px; max-width:860px; line-height:1.75; }
+  .meta-row{ display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
+
+  /* ---------- 现状诊断：表格复刻 ---------- */
+  .mock{ background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-xl); overflow:hidden; }
+  .mock-bar{
+    display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+    background:var(--surface); border-bottom:1px solid var(--hairline);
+    padding:8px 16px; font-size:12px; color:var(--muted);
+  }
+  .mock-bar .route{ font-family:var(--mono); color:var(--slate); font-weight:600; }
+  .mock-body{ padding:24px; }
+  .apphead{ display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; }
+  .apphead h3{ font-size:20px; }
+  .apphead .sub{ margin-top:2px; }
+  .apphead .btns{ display:flex; gap:8px; }
+  .catrow{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .catpill{ border-radius:9999px; font-size:12px; font-weight:600; padding:5px 14px; background:var(--surface); color:var(--slate); }
+  .catpill.on{ background:var(--ink); color:#fff; }
+
+  .tbl{ width:100%; border-collapse:collapse; table-layout:fixed; }
+  .tbl th{
+    background:var(--surface); text-align:left; font-size:11px; font-weight:500; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.05em; padding:10px 12px; border-bottom:1px solid var(--hairline);
+  }
+  .tbl td{ padding:10px 12px; border-top:1px solid var(--hairline); font-size:13px; color:var(--charcoal); vertical-align:middle; }
+  .tbl tbody tr:hover td{ background:var(--surface); }
+  .td-name{ font-weight:600; color:var(--charcoal); }
+  .trunc{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+  .cat-tag{ font-size:11px; font-weight:600; border-radius:9999px; padding:2px 9px; background:var(--surface); color:var(--slate); }
+  .cat-tag.blue{ background:var(--blue-light); color:var(--blue); }
+  .cat-tag.green{ background:var(--green-light); color:var(--green); }
+  .cat-tag.amber{ background:var(--amber-light); color:var(--amber); }
+  .cell-prof{ display:flex; align-items:center; gap:8px; }
+  input[type=range].mini{
+    -webkit-appearance:none; appearance:none; flex:1; min-width:0; height:4px; border-radius:9999px;
+    background:var(--surface); border:1px solid var(--hairline); pointer-events:none; margin:0;
+  }
+  input[type=range].mini::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none; width:12px; height:12px; border-radius:50%;
+    background:var(--blue); border:0;
+  }
+  .pv{ font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .pv.hi{ color:var(--green); } .pv.mid{ color:var(--amber); } .pv.lo{ color:var(--muted); }
+  .op{ font-size:12px; color:var(--slate); }
+  .op .del{ color:var(--muted); margin-left:10px; }
+
+  /* ---------- 三问 / 洞察 ---------- */
+  .qlist{ display:flex; flex-direction:column; gap:0; }
+  .q{ padding:16px 0; border-top:1px solid var(--hairline); }
+  .q:first-child{ border-top:0; padding-top:4px; }
+  .q h4{ font-size:15px; color:var(--ink); }
+  .q p{ font-size:13px; color:var(--slate); margin-top:5px; }
+  .q .verdict{ margin-top:8px; }
+  .insight{
+    margin-top:24px; background:var(--blue-light); border:1px solid oklch(75% 0.09 253);
+    border-radius:var(--r-xl); padding:24px;
+  }
+  .insight-grid{ display:grid; grid-template-columns:1fr auto 1fr; gap:20px; align-items:center; }
+  .insight-grid .cell{ background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg); padding:14px 16px; }
+  .insight-grid .cell .lbl{ font-size:12px; color:var(--muted); }
+  .insight-grid .big{ font-size:40px; font-weight:700; color:var(--ink); line-height:1.1; letter-spacing:-0.02em; }
+  .insight-grid .mid{ text-align:center; }
+  .insight-grid .mid .arrow{ font-size:20px; color:var(--blue); }
+  .insight .k{ font-size:15px; color:var(--ink); font-weight:600; margin-top:18px; line-height:1.7; }
+  .insight .k em{ font-style:normal; color:var(--blue); }
+  .insight .eq{ font-family:var(--mono); font-size:12px; color:var(--slate); margin-top:6px; }
+
+  /* ---------- 导航结构图 ---------- */
+  .node{
+    background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg);
+    padding:16px 20px; display:grid; grid-template-columns:96px minmax(0,1fr) 190px; gap:20px; align-items:start;
+  }
+  .node .lv{ font-family:var(--mono); font-size:12px; font-weight:600; color:var(--blue); }
+  .node .lv small{ display:block; font-family:var(--font); font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
+  .node h4{ font-size:16px; }
+  .node .rt{ font-family:var(--mono); font-size:12px; color:var(--slate); margin-top:2px; }
+  .node .qa{ font-size:13px; color:var(--slate); }
+  .node .qa b{ color:var(--charcoal); font-weight:600; }
+  .node .exits{ font-size:12px; color:var(--muted); margin-top:6px; }
+  .node .aside{ font-size:12px; color:var(--slate); border-left:1px solid var(--hairline); padding-left:16px; }
+  .conn{ display:flex; align-items:center; gap:10px; padding:8px 0 8px 40px; font-size:12px; color:var(--muted); }
+  .conn .bar{ width:1px; height:26px; background:var(--hairline); }
+  .l2row{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin-top:14px; }
+  .l2box{ background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg); padding:14px 16px; }
+  .l2box h4{ font-size:14px; }
+  .l2box .rt{ font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .l2box p{ font-size:12px; color:var(--slate); margin-top:6px; }
+
+  /* ---------- L0 变体 ---------- */
+  .variant{ margin-top:36px; }
+  .variant-h{ display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; }
+  .vtag{ font-family:var(--mono); font-size:12px; font-weight:600; color:#fff; background:var(--ink); border-radius:9999px; padding:2px 12px; }
+  .variant-h h3{ font-size:20px; }
+  .variant-h .cap{ width:100%; font-size:12px; color:var(--muted); margin-top:2px; }
+  .statbar{
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+    padding:12px 16px; background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg);
+    margin-bottom:14px; font-size:13px; color:var(--slate);
+  }
+  .statbar .sep{ color:var(--hairline); }
+  .seg{ display:inline-flex; background:var(--surface); border-radius:9999px; padding:3px; gap:2px; }
+  .seg span{ font-size:12px; font-weight:600; color:var(--slate); padding:4px 12px; border-radius:9999px; }
+  .seg span.on{ background:var(--canvas); color:var(--ink); }
+
+  .rank{ border:1px solid var(--hairline); border-radius:var(--r-lg); overflow:hidden; background:var(--canvas); }
+  .rank-head,.rank-row{
+    display:grid; grid-template-columns:minmax(0,1.6fr) 96px 128px 132px 168px 24px;
+    gap:12px; align-items:center; padding:12px 16px;
+  }
+  .rank-head{ background:var(--surface); font-size:11px; color:var(--muted); letter-spacing:.05em; text-transform:uppercase; }
+  .rank-row{ border-top:1px solid var(--hairline); }
+  .rank-row:hover{ background:var(--surface); }
+  .rank-row .name{ font-size:14px; font-weight:600; color:var(--charcoal); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .rank-row .ev{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .rank-row .self{ font-size:16px; font-weight:600; color:var(--ink); }
+  .rank-row .self small{ font-size:11px; font-weight:400; color:var(--muted); display:block; }
+  .rank-row .ver{ font-size:13px; color:var(--slate); }
+  .rank-row .ver b{ color:var(--ink); }
+  .rank-row .chev{ color:var(--muted); text-align:right; }
+  .rankrow-tall .name{ font-size:14px; }
+  details.more summary{
+    list-style:none; cursor:pointer; border-top:1px solid var(--hairline); padding:12px 16px;
+    font-size:13px; color:var(--slate); display:flex; align-items:center; gap:8px; background:var(--canvas);
+  }
+  details.more summary::-webkit-details-marker{ display:none; }
+  details.more summary:hover{ background:var(--surface); }
+  details.more summary .mk{ font-family:var(--mono); color:var(--muted); }
+  details.more[open] summary .mk{ transform:rotate(90deg); }
+  details.more summary .mk{ display:inline-block; transition:transform .15s ease; }
+  .fold-pad{ padding:6px 16px 14px; }
+  .fold-row{ display:flex; align-items:center; gap:10px; font-size:13px; color:var(--slate); padding:7px 0; border-top:1px dashed var(--hairline); }
+  .fold-row:first-child{ border-top:0; }
+
+  /* ---------- 落差矩阵 ---------- */
+  .chart{ display:grid; grid-template-columns:38px minmax(0,1fr); grid-template-rows:auto 26px; gap:0; }
+  .yaxis{ position:relative; font-size:11px; color:var(--muted); }
+  .yaxis span{ position:absolute; right:8px; transform:translateY(50%); }
+  .plot{
+    position:relative; aspect-ratio:4/3; background:var(--canvas);
+    border:1px solid var(--hairline); border-radius:var(--r-md);
+  }
+  .plot .vline,.plot .hline{ position:absolute; background:var(--hairline); }
+  .plot .vline{ top:0; bottom:0; width:1px; }
+  .plot .hline{ left:0; right:0; height:1px; }
+  .over{
+    position:absolute; inset:0; background:var(--amber-light); opacity:.5;
+    clip-path:polygon(0 100%, 100% 100%, 100% 0);
+  }
+  .diag{
+    position:absolute; left:0; bottom:0; width:125%; height:0;
+    border-top:1px dashed var(--amber); transform-origin:0 0; transform:rotate(-36.87deg);
+  }
+  .region-lbl{ position:absolute; font-size:12px; font-weight:600; }
+  .region-lbl.hi{ right:14px; bottom:12px; color:var(--amber); }
+  .region-lbl.lo{ left:14px; top:12px; color:var(--green); }
+  .pt{ position:absolute; width:11px; height:11px; border-radius:50%; background:var(--blue); transform:translate(-50%,50%); border:2px solid var(--canvas); }
+  .pt.warn{ background:var(--amber); }
+  .pt.good{ background:var(--green); }
+  .pt .lbl{ position:absolute; left:16px; top:50%; transform:translateY(-50%); white-space:nowrap; font-size:12px; color:var(--charcoal); display:flex; align-items:center; gap:6px; }
+  .pt .lbl.left{ left:auto; right:16px; }
+  .pt .lbl b{ font-weight:600; }
+  .pt:hover .lbl{ color:var(--ink); }
+  .pt:hover{ outline:3px solid var(--blue-light); }
+  .xaxis{ grid-column:2; display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding-top:8px; }
+  .axname{ font-size:12px; color:var(--slate); }
+  .unver{ margin-top:18px; border-top:1px dashed var(--hairline); padding-top:14px; }
+  .unver .u-row{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .u-chip{ border:1px dashed var(--muted); border-radius:9999px; font-size:12px; color:var(--slate); padding:3px 12px; background:var(--canvas); }
+  .legend .li{ display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-top:1px solid var(--hairline); font-size:13px; color:var(--slate); }
+  .legend .li:first-of-type{ border-top:0; }
+  .legend .gl{ font-size:16px; line-height:1; margin-top:3px; }
+  .sw{ width:12px; height:12px; border-radius:50%; display:inline-block; margin-top:5px; }
+  .sw.b{ background:var(--blue); } .sw.a{ background:var(--amber); } .sw.g{ background:var(--green); }
+  .sw.dash{ background:transparent; border:1px dashed var(--muted); border-radius:50%; }
+
+  /* ---------- 体检报告 ---------- */
+  .diag-group{ margin-top:20px; }
+  .diag-group .gh{ display:flex; align-items:center; gap:10px; font-size:14px; font-weight:600; color:var(--ink); }
+  .diag-group .gh .cnt{ font-size:12px; color:var(--muted); font-weight:400; }
+  .dxrow{
+    display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:start;
+    border:1px solid var(--hairline); border-radius:var(--r-lg); background:var(--canvas);
+    padding:16px 20px; margin-top:10px;
+  }
+  .dxrow .dxname{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:16px; font-weight:600; color:var(--ink); }
+  .dxrow .dxtext{ font-size:14px; color:var(--slate); margin-top:8px; max-width:76ch; }
+  .dxrow .dxtext b{ color:var(--charcoal); font-weight:600; }
+  .dxrow .dxact{ display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+  .dxrow .dxact .why{ font-size:11px; color:var(--muted); text-align:right; max-width:150px; line-height:1.5; }
+  .dxrow.warn{ border-color:oklch(88% 0.06 60); }
+  .dxrow.good{ border-color:oklch(88% 0.05 160); }
+  .dxrow.none{ border-style:dashed; }
+  .dxrow.mute{ color:var(--muted); }
+
+  /* ---------- L1 ---------- */
+  .skill-head{ display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; justify-content:space-between; }
+  .skill-head h3{ font-size:24px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .skill-head .note{ font-size:12px; color:var(--muted); margin-top:6px; max-width:62ch; }
+  .metrics{ display:flex; flex-wrap:wrap; gap:12px; margin-top:18px; }
+  .metric{ border:1px solid var(--hairline); border-radius:var(--r-lg); padding:10px 16px; min-width:150px; background:var(--canvas); }
+  .metric .lbl{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .metric .val{ font-size:24px; font-weight:700; color:var(--ink); line-height:1.3; }
+  .metric .val small{ font-size:12px; font-weight:400; color:var(--muted); }
+  .metric.hot{ border-color:var(--amber); }
+  .metric.hot .val{ color:var(--amber); }
+
+  .tl{ position:relative; }
+  .tl-item{ position:relative; display:grid; grid-template-columns:20px minmax(0,1fr); column-gap:14px; padding-bottom:22px; }
+  .tl-item:last-child{ padding-bottom:0; }
+  .tl-item::before{ content:""; position:absolute; left:6px; top:16px; bottom:-2px; width:1px; background:var(--hairline); }
+  .tl-item:last-child::before{ display:none; }
+  .tl-dot{ width:13px; height:13px; border-radius:50%; background:var(--blue); margin-top:5px; z-index:1; }
+  .tl-dot.obj{ background:var(--blue); }
+  .tl-dot.ai{ background:var(--green); }
+  .tl-dot.notes{ background:var(--amber); }
+  .tl-dot.self{ background:var(--canvas); border:1px dashed var(--muted); }
+  .tl-dot.gap{ background:var(--canvas); border:1px dashed var(--red); }
+  .tl-head{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+  .tl-head .tt{ font-size:14px; font-weight:600; color:var(--ink); }
+  .tl-head .when{ font-size:12px; color:var(--muted); }
+  .tl-body{ font-size:13px; color:var(--slate); margin-top:4px; }
+  .tl-body .quote{ color:var(--charcoal); }
+  .conf{ display:inline-flex; align-items:center; gap:6px; }
+  .meter{ display:inline-flex; gap:2px; }
+  .meter i{ width:5px; height:9px; background:var(--hairline); border-radius:1px; display:block; }
+  .meter i.f{ background:var(--slate); }
+  .meter.obj i.f{ background:var(--blue); } .meter.ai i.f{ background:var(--green); }
+  .meter.notes i.f{ background:var(--amber); } .meter.self i.f{ background:var(--muted); }
+
+  .plan .ph{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .plan .zone{ border-top:1px solid var(--hairline); padding:12px 0; }
+  .plan .zone:first-of-type{ border-top:0; }
+  .plan .zl{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .plan .zt{ font-size:13px; color:var(--slate); margin-top:4px; }
+  .plan .zt b{ color:var(--charcoal); }
+  .skel{ border:1px dashed var(--hairline); border-radius:var(--r-sm); height:8px; margin-top:8px; }
+  .skel.w70{ width:70%; } .skel.w45{ width:45%; } .skel.w88{ width:88%; }
+
+  .kit{ display:flex; flex-direction:column; gap:10px; }
+  .kit .step{ display:flex; gap:12px; align-items:center; border:1px solid var(--hairline); border-radius:var(--r-lg); padding:12px 14px; background:var(--canvas); }
+  .kit .step .idx{ font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .kit .step .kt{ font-size:14px; font-weight:600; color:var(--ink); }
+  .kit .step .kd{ font-size:12px; color:var(--muted); }
+  .kit .step.next{ border-color:var(--blue); }
+  .kit .step .go{ margin-left:auto; }
+
+  /* ---------- L2 ---------- */
+  .probe{ border:1px dashed var(--muted); border-radius:var(--r-lg); background:var(--canvas); padding:18px; }
+  .probe .ph-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .probe h4{ font-size:15px; }
+  .probe .rt{ font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .probe p{ font-size:13px; color:var(--slate); margin-top:8px; }
+  .probe .ph-box{ border:1px dashed var(--hairline); border-radius:var(--r-md); margin-top:12px; padding:16px; text-align:center; color:var(--muted); font-size:12px; background:var(--surface); }
+
+  /* ---------- 信号表 ---------- */
+  .sig{ width:100%; border-collapse:collapse; background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-lg); overflow:hidden; }
+  .sig th{ background:var(--surface); text-align:left; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; font-weight:600; padding:12px 16px; border-bottom:1px solid var(--hairline); }
+  .sig td{ padding:14px 16px; border-top:1px solid var(--hairline); font-size:13px; color:var(--slate); vertical-align:top; }
+  .sig td:first-child{ color:var(--charcoal); font-weight:600; white-space:nowrap; }
+  .sig code{ color:var(--blue); background:var(--surface); border-radius:4px; padding:1px 5px; }
+  .ladder{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .ladder .lv{ border:1px solid var(--hairline); border-radius:var(--r-sm); padding:6px 10px; font-size:12px; background:var(--canvas); color:var(--slate); }
+  .ladder .lv b{ color:var(--ink); }
+  .ladder .lt{ color:var(--muted); }
+
+  .foot{ margin-top:72px; padding-top:20px; border-top:1px solid var(--hairline); display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; font-size:12px; color:var(--muted); }
+
+  @media (max-width:1080px){
+    .wrap{ padding:0 20px 72px; }
+    .grid2,.gridchart,.gridl1,.grid3,.l2row{ grid-template-columns:1fr; }
+    .node{ grid-template-columns:1fr; gap:8px; }
+    .node .aside{ border-left:0; padding-left:0; border-top:1px solid var(--hairline); padding-top:8px; }
+    .insight-grid{ grid-template-columns:1fr; }
+    .insight-grid .mid{ text-align:left; }
+    .rank-head,.rank-row{ grid-template-columns:minmax(0,1.4fr) 80px 120px 120px 24px; }
+    .rank-head .hg,.rank-row .hg{ display:none; }
+  }
+  @media (max-width:720px){
+    .hero h1{ font-size:28px; }
+    .rank-head,.rank-row{ grid-template-columns:minmax(0,1.4fr) 76px 24px; }
+    .rank-head .hd,.rank-row .hd{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ======================= 设计系统声明（半固定） ======================= -->
+<div class="topbar">
+  <div class="topbar-in">
+    <span class="lbl">设计系统声明</span>
+    <span>类型 12 / 14 / 16 / 24</span><span class="dot">·</span>
+    <span>字重 400 / 600 / 700</span><span class="dot">·</span>
+    <span>页面底 surface · 卡片底 canvas</span><span class="dot">·</span>
+    <span>圆角 6 / 8 / 12 / 16 / 24 / 9999</span><span class="dot">·</span>
+    <span>栅格 4px 基数 · 卡片内边距 20–24 · 内容宽 1280</span><span class="dot">·</span>
+    <span>1px hairline 描边，无阴影（弹层除外）· 全 pill 按钮 · 无渐变 / 无 emoji</span>
+  </div>
+</div>
+
+<main class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow">RESUME PRO · 设计交付 · SKILL LIBRARY IA</p>
+    <h1>技能库 · 页面导航重构设计</h1>
+    <p class="lede">
+      默认页从「表格」改成「仪表盘」。表格是<strong>内容清单</strong>——它假设你知道你要找什么；
+      仪表盘是<strong>状态俯瞰</strong>——你打开它时并不知道自己要找什么，你想知道的是「我在哪、哪里虚、该补哪」。
+      本稿给出三级导航结构与 L0 的三个可选变体，供挑选或混搭。
+    </p>
+    <div class="meta-row">
+      <span class="chip chip-blue">重构重点 · L0 /skills</span>
+      <span class="chip chip-neutral">L1 /skills/:id</span>
+      <span class="chip chip-neutral">L2 /feynman · /quiz · 笔记</span>
+      <span class="chip chip-neutral">v1 · 2026-10-03</span>
+      <span class="chip chip-neutral">数据取自 backend/resume_app.db · skills 13 条</span>
+    </div>
+  </section>
+
+  <!-- ======================= 01 现状诊断 ======================= -->
+  <section class="sec" id="s1">
+    <div class="sec-h">
+      <span class="sec-idx">▸ 01</span>
+      <div>
+        <h2>现状诊断</h2>
+        <p class="sec-desc">左：当前 SkillLibrary 主视图的还原（13 条技能 / 6 列 / 可拖滑块）。右：这张表答不出的三个问题。</p>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div>
+        <div class="mock">
+          <div class="mock-bar"><span class="route">/skills</span><span>当前实现 · frontend/web/pages/SkillLibrary.tsx</span></div>
+          <div class="mock-body">
+            <div class="apphead">
+              <div>
+                <h3>技能库</h3>
+                <p class="sub">管理你的技能，跟踪学习进度</p>
+              </div>
+              <div class="btns">
+                <span class="pill">费曼复习</span>
+                <span class="pill pill-blue">+ 添加技能</span>
+              </div>
+            </div>
+            <div class="catrow">
+              <span class="catpill on">全部</span><span class="catpill">前端</span><span class="catpill">工具</span><span class="catpill">软技能</span>
+            </div>
+            <table class="tbl">
+              <colgroup>
+                <col style="width:26%"><col style="width:12%"><col style="width:24%"><col style="width:16%"><col style="width:14%"><col style="width:8%">
+              </colgroup>
+              <thead>
+                <tr><th>技能名称</th><th>分类</th><th>熟练度</th><th>来源</th><th>备注</th><th style="text-align:right">操作</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="td-name">Transformer架构</td>
+                  <td><span class="cat-tag blue">前端</span></td>
+                  <td><div class="cell-prof"><input class="mini" type="range" min="0" max="100" value="64"><span class="pv mid">64%</span></div></td>
+                  <td><span class="trunc">-</span></td>
+                  <td><span class="trunc" title="仅需要知道框架和概念">仅需要知道框架和概念</span></td>
+                  <td style="text-align:right"><span class="op">编辑<span class="del">删除</span></span></td>
+                </tr>
+                <tr>
+                  <td class="td-name">Agentic RAG</td>
+                  <td><span class="cat-tag">软技能</span></td>
+                  <td><div class="cell-prof"><input class="mini" type="range" min="0" max="100" value="100"><span class="pv hi">100%</span></div></td>
+                  <td><span class="trunc">-</span></td>
+                  <td><span class="trunc" title="RAG 最新技术">RAG 最新技术</span></td>
+                  <td style="text-align:right"><span class="op">编辑<span class="del">删除</span></span></td>
+                </tr>
+                <tr>
+                  <td class="td-name">提示词工程</td>
+                  <td><span class="cat-tag">工具</span></td>
+                  <td><div class="cell-prof"><input class="mini" type="range" min="0" max="100" value="58"><span class="pv mid">58%</span></div></td>
+                  <td><span class="trunc" title="JD分析: 图片导入">JD分析: 图片导入</span></td>
+                  <td><span class="trunc">-</span></td>
+                  <td style="text-align:right"><span class="op">编辑<span class="del">删除</span></span></td>
+                </tr>
+                <tr>
+                  <td class="td-name">MCP</td>
+                  <td><span class="cat-tag blue">前端</span></td>
+                  <td><div class="cell-prof"><input class="mini" type="range" min="0" max="100" value="40"><span class="pv lo">40%</span></div></td>
+                  <td><span class="trunc">-</span></td>
+                  <td><span class="trunc">-</span></td>
+                  <td style="text-align:right"><span class="op">编辑<span class="del">删除</span></span></td>
+                </tr>
+                <tr>
+                  <td class="td-name">harness</td>
+                  <td><span class="cat-tag blue">前端</span></td>
+                  <td><div class="cell-prof"><input class="mini" type="range" min="0" max="100" value="15"><span class="pv lo">15%</span></div></td>
+                  <td><span class="trunc">-</span></td>
+                  <td><span class="trunc" title="agent 的周边基础设施">agent 的周边基础设施…</span></td>
+                  <td style="text-align:right"><span class="op">编辑<span class="del">删除</span></span></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="annot" style="margin-top:16px">
+              <b>隐含假设：假设你知道你要找什么。</b>
+              列头是「技能名称 / 分类 / 熟练度 / 来源 / 备注」，排序没有优先级，13 条平铺；
+              唯一的状态字段是一个可以随时拖动、且拖动即生效的滑块。你打开这一页时，它不告诉你任何结论。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="kicker">表格答不出的三个问题</div>
+        <div class="qlist" style="margin-top:8px">
+          <div class="q">
+            <h4>1 · 我到底会不会</h4>
+            <p>熟练度是拖出来的整数，不是做出来的结果。同一列里，「自评 100」和「刷了 10 题对了 7 题」在视觉上毫无区别。</p>
+            <div class="verdict"><span class="chip chip-ghost">表格无法回答</span></div>
+          </div>
+          <div class="q">
+            <h4>2 · 我的理解有没有漏洞，边界在哪</h4>
+            <p>「讲不出来」「追问就卡壳」在表格里没有字段可以承载。漏洞不是缺失的数据，是缺失的维度。</p>
+            <div class="verdict"><span class="chip chip-ghost">表格无法回答</span></div>
+          </div>
+          <div class="q">
+            <h4>3 · 学到什么程度算够</h4>
+            <p>表格只呈现现状，不含目标。没有「够不够」的判据，熟练度 64 只是一个数字，不是一句话。</p>
+            <div class="verdict"><span class="chip chip-ghost">表格无法回答</span></div>
+          </div>
+        </div>
+
+        <hr class="rule">
+        <p class="small">
+          表格回答「有哪些技能」，仪表盘回答「我的技能状况怎么样」。
+          模块的真实定位是<b style="color:var(--charcoal)">个人理解状态的探测仪</b>，不是教学平台。
+        </p>
+      </div>
+    </div>
+
+    <!-- 核心洞察 -->
+    <div class="insight">
+      <div class="kicker" style="color:var(--blue)">核心洞察 · 仪表盘的第一排序键是「落差」，不是「熟练度」</div>
+      <div class="insight-grid" style="margin-top:14px">
+        <div class="cell">
+          <div class="lbl">自评 · 拖出来的</div>
+          <div class="big num">64</div>
+          <div class="small">单次拖动 · 置信度 0.2</div>
+        </div>
+        <div class="mid">
+          <div class="arrow">→</div>
+          <div class="chip chip-amber" style="margin-top:6px">−32 高估</div>
+        </div>
+        <div class="cell">
+          <div class="lbl">验证 · 做出来的</div>
+          <div class="big num">32</div>
+          <div class="small">费曼 L2 字面理解 · 置信度 0.8</div>
+        </div>
+      </div>
+      <p class="k">
+        费曼等级、刷题得分、笔记完成度是<em>真做出来的</em>信号；熟练度是<em>自己说的</em>。
+        两者的落差才是最有价值的信息 —— 自评 64 但费曼只讲到 L2，说明你高估了自己（流畅性错觉）。
+      </p>
+      <p class="eq">落差 = 验证分 − 自评：负值 = 高估（证据说你不像你以为的那么好），正值 = 低估。排序键取落差升序，最负的排最前。</p>
+    </div>
+  </section>
+
+  <!-- ======================= 02 导航结构 ======================= -->
+  <section class="sec" id="s2">
+    <div class="sec-h">
+      <span class="sec-idx">▸ 02</span>
+      <div>
+        <h2>导航结构：俯瞰 → 证据 → 动作</h2>
+        <p class="sec-desc">三级各自只做一件事。关键原则：默认页是「状态」不是「内容」——L0 不展示技能的全部信息，只展示需要你注意的。</p>
+      </div>
+    </div>
+
+    <div class="statbar" style="margin-bottom:16px">
+      <span class="chip chip-neutral">现在：默认页 = 表格（内容清单）</span>
+      <span class="sep">→</span>
+      <span class="chip chip-blue">重构后：默认页 = 仪表盘（状态俯瞰）</span>
+      <span class="sep">·</span>
+      <span>表格不删除，降级为 L0 里的「全部技能」视图</span>
+    </div>
+
+    <div class="node">
+      <div class="lv">L0<small>俯瞰</small></div>
+      <div>
+        <h4>技能库仪表盘</h4>
+        <div class="rt">/skills</div>
+        <p class="qa" style="margin-top:8px">回答：<b>我在哪 · 哪里虚 · 该补哪</b></p>
+        <p class="exits">形态：落差榜（变体 A） / 落差矩阵（变体 B） / 体检报告（变体 C） · 排序键 = 落差</p>
+      </div>
+      <div class="aside">
+        默认页。只出现「需要你注意的」：高估、低估、未验证。状态可信的技能折叠收起。
+      </div>
+    </div>
+
+    <div class="conn"><span class="bar"></span><span>点击某个技能 → 进入 L1（只有一个技能，不带全局信息）</span></div>
+
+    <div class="node">
+      <div class="lv">L1<small>证据</small></div>
+      <div>
+        <h4>技能详情</h4>
+        <div class="rt">/skills/:id</div>
+        <p class="qa" style="margin-top:8px">回答：<b>这个技能的证据是什么 · 差距具体在哪</b></p>
+        <p class="exits">内容：证据时间线（做出来的事，倒序） · 学习计划（决策书） · 三件套入口</p>
+      </div>
+      <div class="aside">
+        承载「这个判断凭什么」：每条证据标注来源与置信度，缺失的证据留空位。
+      </div>
+    </div>
+
+    <div class="conn"><span class="bar"></span><span>点击某个探测动作 → 进入 L2（复用现有页面，不重画）</span></div>
+
+    <div class="node" style="border-style:dashed">
+      <div class="lv">L2<small>动作</small></div>
+      <div>
+        <h4>探测器</h4>
+        <div class="rt">/feynman · /quiz · 笔记</div>
+        <p class="qa" style="margin-top:8px">回答：<b>去验证一遍，把证据写回时间线</b></p>
+        <p class="exits">每个动作一个页面，一次只做一件事：讲一遍 / 做几题 / 记一条</p>
+      </div>
+      <div class="aside">
+        现有页面直接复用，本次不重画。新的只有 L0，和 L1 里的证据时间线。
+      </div>
+    </div>
+
+    <div class="l2row">
+      <div class="l2box">
+        <h4>费曼教学</h4>
+        <div class="rt">/feynman</div>
+        <p>验证 · 深度。五级状态机给出等级与追问，是落差的主证据。</p>
+      </div>
+      <div class="l2box">
+        <h4>面试题库</h4>
+        <div class="rt">/quiz</div>
+        <p>验证 · 广度。选择题客观判分，置信度最高，但只测「记住没有」。</p>
+      </div>
+      <div class="l2box">
+        <h4>康奈尔笔记</h4>
+        <div class="rt">技能详情内</div>
+        <p>加工 · 过程。证明你处理过，不证明你讲得出，折算分封顶 60。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= 03 L0 三个变体 ======================= -->
+  <section class="sec" id="s3">
+    <div class="sec-h">
+      <span class="sec-idx">▸ 03</span>
+      <div>
+        <h2>L0 仪表盘 · 三个变体</h2>
+        <p class="sec-desc">从保守到激进。三个变体数据同源、结论一致，只换取景方式；可挑一个上线，也可分阶段演进（A → B → C）。</p>
+      </div>
+    </div>
+
+    <!-- ---- 变体 A ---- -->
+    <div class="variant">
+      <div class="variant-h">
+        <span class="vtag">变体 A</span>
+        <h3>风险榜</h3>
+        <span class="chip chip-green">保守</span>
+        <p class="cap">适合先上线、观察反弹的阶段 · 改动最小：复用现有列表与卡片形态，只加聚合排序与落差 chip（前端可算，或加一个只读聚合接口）</p>
+      </div>
+
+      <div class="mock" style="margin-top:16px">
+        <div class="mock-bar"><span class="route">/skills</span><span>变体 A · 保留列表心智，把「排序键」和「每行显示的字段」换掉</span></div>
+        <div class="mock-body">
+          <div class="apphead">
+            <div>
+              <h3>技能库</h3>
+              <p class="sub">先看落差，再看技能</p>
+            </div>
+            <div class="btns">
+              <span class="pill">费曼复习</span>
+              <span class="pill pill-blue">+ 添加技能</span>
+            </div>
+          </div>
+
+          <div class="statbar">
+            <span><b class="num" style="color:var(--ink)">13</b> 个技能</span><span class="sep">·</span>
+            <span class="chip chip-red">4 个高估</span>
+            <span class="chip chip-green">1 个低估</span>
+            <span class="chip chip-ghost">7 个未验证（含 2 个自评满分）</span>
+            <span style="margin-left:auto; display:flex; gap:10px; align-items:center">
+              <span class="seg"><span class="on">全部</span><span>有落差</span><span>未验证</span></span>
+              <span class="small">排序：落差 ↓</span>
+            </span>
+          </div>
+
+          <div class="rank">
+            <div class="rank-head">
+              <div>技能 / 最近证据</div>
+              <div>自评</div>
+              <div>落差</div>
+              <div class="hg">验证</div>
+              <div class="hd">置信度</div>
+              <div></div>
+            </div>
+
+            <div class="rank-row">
+              <div>
+                <div class="name">Transformer架构 <span class="cat-tag blue">前端</span></div>
+                <div class="ev">费曼教学 · 讲到 L2 · 3 天前</div>
+              </div>
+              <div class="self num">64<small>拖出来的</small></div>
+              <div><span class="chip chip-red">−32 高估</span></div>
+              <div class="ver hg">L2 = <b>32</b></div>
+              <div class="small hd">AI 判定 · 0.8</div>
+              <div class="chev">›</div>
+            </div>
+
+            <div class="rank-row">
+              <div>
+                <div class="name">产品原型设计 <span class="cat-tag">软技能</span></div>
+                <div class="ev">康奈尔笔记 · 4/6 步有内容 · 2 周前</div>
+              </div>
+              <div class="self num">67<small>拖出来的</small></div>
+              <div><span class="chip chip-red">−27 高估</span></div>
+              <div class="ver hg">笔记 = <b>40</b></div>
+              <div class="small hd">启发式 · 0.4</div>
+              <div class="chev">›</div>
+            </div>
+
+            <div class="rank-row">
+              <div>
+                <div class="name">MCP <span class="cat-tag blue">前端</span></div>
+                <div class="ev">费曼教学 · 停在 L1 · 5 周前</div>
+              </div>
+              <div class="self num">40<small>拖出来的</small></div>
+              <div><span class="chip chip-amber">−24 高估</span></div>
+              <div class="ver hg">L1 = <b>16</b></div>
+              <div class="small hd">AI 判定 · 0.8</div>
+              <div class="chev">›</div>
+            </div>
+
+            <div class="rank-row">
+              <div>
+                <div class="name">PRD撰写 <span class="cat-tag">软技能</span></div>
+                <div class="ev">康奈尔笔记 · 2/6 步有内容 · 3 周前</div>
+              </div>
+              <div class="self num">33<small>拖出来的</small></div>
+              <div><span class="chip chip-amber">−13 高估</span></div>
+              <div class="ver hg">笔记 = <b>20</b></div>
+              <div class="small hd">启发式 · 0.4</div>
+              <div class="chev">›</div>
+            </div>
+
+            <div class="rank-row">
+              <div>
+                <div class="name">harness <span class="cat-tag blue">前端</span></div>
+                <div class="ev">费曼教学 · 讲到 L3 · 5 天前</div>
+              </div>
+              <div class="self num">15<small>拖出来的</small></div>
+              <div><span class="chip chip-green">+33 低估</span></div>
+              <div class="ver hg">L3 = <b>48</b></div>
+              <div class="small hd">AI 判定 · 0.8</div>
+              <div class="chev">›</div>
+            </div>
+
+            <details class="more">
+              <summary><span class="mk">›</span> 其余 8 个：1 个基本一致 · 7 个未验证（含 2 个自评满分，见变体 C）</summary>
+              <div class="fold-pad">
+                <div class="fold-row"><span class="chip chip-ghost">+2 一致</span> 提示词工程 <span class="small">自评 58 · 刷题 6/10 = 60 · 1 周前</span></div>
+                <div class="fold-row"><span class="chip chip-ghost">○ 未验证</span> Agentic RAG <span class="small">自评 100 · 零证据</span></div>
+                <div class="fold-row"><span class="chip chip-ghost">○ 未验证</span> Xmind <span class="small">自评 100 · 零证据</span></div>
+                <div class="fold-row"><span class="chip chip-ghost">○ 未验证</span> multiAgent · A2A · Function Calling · 计算机网络/操作系统 · deepseek harness <span class="small">自评均为 0 · 还没开始</span></div>
+              </div>
+            </details>
+          </div>
+
+          <p class="annot" style="margin-top:14px">
+            <b>改了四处：</b>
+            ① 排序键从「熟练度」换成「落差」；② 每行并排两个数字（自评 / 验证），中间放落差 chip；
+            ③ 未验证单独成组，排在最后；④ 「操作」列（编辑 / 删除）退到行尾，改成进入 L1 的箭头。
+            其余样式（表格 → 卡片行、分类 pill、pill 按钮）与现状一致。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- 变体 B ---- -->
+    <div class="variant">
+      <div class="variant-h">
+        <span class="vtag">变体 B</span>
+        <h3>落差矩阵</h3>
+        <span class="chip chip-amber">中等</span>
+        <p class="cap">适合技能数 10–30 的成长期 · 需要一个新的聚合接口（一次返回全部技能的各路证据折算值），图表纯 CSS 渲染，不引图表库</p>
+      </div>
+
+      <div class="mock" style="margin-top:16px">
+        <div class="mock-bar"><span class="route">/skills?view=matrix</span><span>变体 B · 一次看完全库分布，横轴是你说的，纵轴是你做出来的</span></div>
+        <div class="mock-body">
+          <div class="apphead">
+            <div>
+              <h3>技能库</h3>
+              <p class="sub">横轴：自评熟练度（拖出来的） · 纵轴：验证强度（做出来的）</p>
+            </div>
+            <div class="btns">
+              <span class="seg"><span class="on">矩阵</span><span>榜单</span></span>
+              <span class="pill">费曼复习</span>
+            </div>
+          </div>
+
+          <div class="gridchart">
+            <div>
+              <div style="display:grid; grid-template-columns:38px minmax(0,1fr);">
+                <div class="yaxis">
+                  <span style="bottom:100%">100</span>
+                  <span style="bottom:75%">75</span>
+                  <span style="bottom:50%">50</span>
+                  <span style="bottom:25%">25</span>
+                  <span style="bottom:0">0</span>
+                </div>
+                <div class="plot">
+                  <div class="hline" style="bottom:25%"></div>
+                  <div class="hline" style="bottom:50%"></div>
+                  <div class="hline" style="bottom:75%"></div>
+                  <div class="vline" style="left:25%"></div>
+                  <div class="vline" style="left:50%"></div>
+                  <div class="vline" style="left:75%"></div>
+
+                  <div class="over"></div>
+                  <div class="diag"></div>
+                  <div class="region-lbl hi">高估区 · 你以为你会了</div>
+                  <div class="region-lbl lo">低估区 · 其实你会</div>
+
+                  <div class="pt warn" style="left:64%; bottom:32%">
+                    <span class="lbl"><b>Transformer架构</b><span class="chip chip-red">−32</span></span>
+                  </div>
+                  <div class="pt warn" style="left:67%; bottom:40%">
+                    <span class="lbl"><b>产品原型设计</b><span class="chip chip-red">−27</span></span>
+                  </div>
+                  <div class="pt warn" style="left:40%; bottom:16%">
+                    <span class="lbl"><b>MCP</b><span class="chip chip-amber">−24</span></span>
+                  </div>
+                  <div class="pt warn" style="left:33%; bottom:20%">
+                    <span class="lbl left"><span class="chip chip-amber">−13</span><b>PRD撰写</b></span>
+                  </div>
+                  <div class="pt good" style="left:15%; bottom:48%">
+                    <span class="lbl"><b>harness</b><span class="chip chip-green">+33</span></span>
+                  </div>
+                  <div class="pt" style="left:58%; bottom:60%">
+                    <span class="lbl"><b>提示词工程</b><span class="chip chip-neutral">+2</span></span>
+                  </div>
+                </div>
+              </div>
+              <div style="display:grid; grid-template-columns:38px minmax(0,1fr);">
+                <div></div>
+                <div class="xaxis"><span>0 · 完全不会</span><span>50</span><span>100 · 自评满分</span></div>
+              </div>
+
+              <div class="unver">
+                <div class="axname">○ 未验证 · 7 个（没有 Y 值，落不到图上）</div>
+                <div class="u-row">
+                  <span class="u-chip">Agentic RAG · 自评 100</span>
+                  <span class="u-chip">Xmind · 自评 100</span>
+                  <span class="u-chip">+ 5 个自评 0 的技能</span>
+                </div>
+                <p class="small" style="margin-top:8px">
+                  两个自评满分的技能从来没有被验证过 —— 图上离左下角最远的空白，比任何高估点都值得先处理。
+                </p>
+              </div>
+            </div>
+
+            <div class="card legend">
+              <p style="font-size:15px; font-weight:600; color:var(--ink)">右下角 = 你以为你会了</p>
+              <p class="small" style="margin-top:6px">点离虚线越远，落差越大。横轴是你说的，纵轴是你做出来的。</p>
+              <div class="li"><span class="sw b"></span><span>对角线 = 自评与验证一致（y = x）</span></div>
+              <div class="li"><span class="sw a"></span><span>线下（琥珀）= 高估 · <b class="num">4</b> 个</span></div>
+              <div class="li"><span class="sw g"></span><span>线上（绿）= 低估 · <b class="num">1</b> 个（另有 1 个贴线，±2 视为一致）</span></div>
+              <div class="li"><span class="sw dash"></span><span>图外 = 未验证 · <b class="num">7</b> 个</span></div>
+              <hr class="rule" style="margin:14px 0">
+              <p class="small">
+                这个视图的价值不在「读得准」，而在<b style="color:var(--charcoal)">一次看完全库的形状</b>：
+                当高估点连成一片，问题就不是某个技能，是你在用「听过」代替「会」。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---- 变体 C ---- -->
+    <div class="variant">
+      <div class="variant-h">
+        <span class="vtag">变体 C</span>
+        <h3>体检报告</h3>
+        <span class="chip chip-red">激进</span>
+        <p class="cap">适合把技能库当唯一入口的重度用户 · 需要聚合接口 + 诊断文案生成（规则驱动即可，不必调 AI）；放弃列表心智，改用分诊语言</p>
+      </div>
+
+      <div class="mock" style="margin-top:16px">
+        <div class="mock-bar"><span class="route">/skills?view=diagnosis</span><span>变体 C · 不再给数据，给结论和下一步</span></div>
+        <div class="mock-body">
+          <div class="apphead">
+            <div>
+              <h3>技能库</h3>
+              <p class="sub">13 个技能 · 4 个高估 · 1 个低估 · 7 个未验证 · 按「需要你注意的程度」分组</p>
+            </div>
+            <div class="btns"><span class="pill pill-blue">开始体检</span></div>
+          </div>
+
+          <div class="diag-group">
+            <div class="gh">⚠ 需要处理 <span class="cnt">4 个 · 证据显示你高估了自己</span></div>
+
+            <div class="dxrow warn">
+              <div>
+                <div class="dxname">Transformer架构 <span class="cat-tag blue">前端</span> <span class="chip chip-red">−32 高估</span></div>
+                <p class="dxtext">你在这个技能上高估了自己 <b>32 分</b>。费曼只讲到「能复述定义」，还没到「能讲清为什么」——追问「为什么除以 √d」时你卡住了。刷题 10 题 7 对是定义题，撑不起自评 64。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill pill-blue">去讲一遍</span>
+                <span class="why">目标 L3：讲清因果链，不看笔记</span>
+              </div>
+            </div>
+
+            <div class="dxrow warn">
+              <div>
+                <div class="dxname">产品原型设计 <span class="cat-tag">软技能</span> <span class="chip chip-red">−27 高估</span></div>
+                <p class="dxtext">自评 <b>67</b>，但笔记只写到第 4 步，也从来没有一次讲出来或做出来的记录 —— 这个分是凭感觉给的。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill">去讲一遍</span>
+                <span class="why">先把「感觉会」变成一次可回看的记录</span>
+              </div>
+            </div>
+
+            <div class="dxrow warn">
+              <div>
+                <div class="dxname">MCP <span class="cat-tag blue">前端</span> <span class="chip chip-amber">−24 高估</span></div>
+                <p class="dxtext">费曼停在 <b>L1「混沌」</b>：你在用这个名字，但还说不清它到底解决什么问题。自评 40 给早了。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill">去讲一遍</span>
+                <span class="why">从「它替代了什么」开始讲</span>
+              </div>
+            </div>
+
+            <div class="dxrow warn">
+              <div>
+                <div class="dxname">PRD撰写 <span class="cat-tag">软技能</span> <span class="chip chip-amber">−13 高估</span></div>
+                <p class="dxtext">笔记 2/6 步，证据太少 —— 先别急着下结论，也别急着补熟练度。当前最该做的是<b>多留一条证据</b>。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill">做 10 题</span>
+                <span class="why">换取一条客观判分</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="diag-group">
+            <div class="gh">✓ 状态可信 <span class="cnt">2 个 · 自评与证据基本吻合，不需要动作</span></div>
+
+            <div class="dxrow good">
+              <div>
+                <div class="dxname">harness <span class="cat-tag blue">前端</span> <span class="chip chip-green">+33 低估</span></div>
+                <p class="dxtext">你只给了自己 15 分，但费曼讲到了 <b>L3「关联」</b>——你能把它和上下文管理、工具调用串起来。这条被低估的技能值得补进简历。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill">去讲一遍</span>
+                <span class="why">冲 L4：证明你能重构这套基础设施</span>
+              </div>
+            </div>
+
+            <div class="dxrow good">
+              <div>
+                <div class="dxname">提示词工程 <span class="cat-tag">工具</span> <span class="chip chip-neutral">+2 一致</span></div>
+                <p class="dxtext">自评 58，刷题 10 题 6 对。全库<b>唯一一个自评准的技能</b>——它同时也是一个校准锚点：别的技能偏离它越远，越可疑。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill">做 10 题</span>
+                <span class="why">把 6 对刷到 8 对，钉子钉牢</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="diag-group">
+            <div class="gh">○ 未验证 <span class="cnt">7 个 · 其中 2 个自评满分，是全库最大的盲区</span></div>
+
+            <div class="dxrow none">
+              <div>
+                <div class="dxname">Agentic RAG <span class="cat-tag">软技能</span> <span class="chip chip-ghost">自评 100 · 零证据</span></div>
+                <p class="dxtext">自评满分，但没有任何一条做出来的记录。你甚至不知道自己是真的会，还是只是看过 —— <b>不知道自己不会，比知道自己不会更危险</b>。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill pill-blue">开始记录</span>
+                <span class="why">讲一遍，让 100 分有出处</span>
+              </div>
+            </div>
+
+            <div class="dxrow none">
+              <div>
+                <div class="dxname">Xmind <span class="cat-tag">工具</span> <span class="chip chip-ghost">自评 100 · 零证据</span></div>
+                <p class="dxtext">第二个自评满分。工具类技能也会被高估，只是你还没遇到会暴露它的场景。</p>
+              </div>
+              <div class="dxact">
+                <span class="pill">开始记录</span>
+                <span class="why">一条笔记也算证据</span>
+              </div>
+            </div>
+
+            <details class="more" style="border:1px dashed var(--muted); border-radius:var(--r-lg); margin-top:10px">
+              <summary><span class="mk">›</span> 其余 5 个：multiAgent · A2A · Function Calling · 计算机网络/操作系统 · deepseek harness（自评均为 0）</summary>
+              <div class="fold-pad">
+                <p class="small">还没开始，不构成风险 —— 它们不进「需要处理」，也不该被算成「待办」。只有当你开始用它们写简历时，才会被拉进盲区组。</p>
+              </div>
+            </details>
+          </div>
+
+          <p class="annot" style="margin-top:16px">
+            <b>这一变体最能体现「探测仪」定位：</b>它不说「你有 13 个技能」，它说「你有 4 个地方高估了自己」。
+            每个结论行都带一个可以直接点的动作，动作产出新证据，回到 L1 时间线。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= 04 L1 ======================= -->
+  <section class="sec" id="s4">
+    <div class="sec-h">
+      <span class="sec-idx">▸ 04</span>
+      <div>
+        <h2>L1 技能详情 · 证据时间线 + 学习计划 + 三件套</h2>
+        <p class="sec-desc">以真实数据里的 Transformer架构（id 18，自评 64，备注「仅需要知道框架和概念」）为例。</p>
+      </div>
+    </div>
+
+    <div class="mock">
+      <div class="mock-bar"><span class="route">/skills/18</span><span>从 L0 点进来 · 只有一个技能，不带全局统计</span></div>
+      <div class="mock-body">
+        <div class="skill-head">
+          <div>
+            <div class="small"><span style="color:var(--blue)">技能库</span> / Transformer架构</div>
+            <h3 style="margin-top:6px">Transformer架构 <span class="cat-tag blue">前端</span> <span class="chip chip-amber">⚠ 高估 32</span></h3>
+            <p class="note">备注（边界提示）：仅需要知道框架和概念 —— 这条边界会直接影响「学到什么程度算够」的判定。</p>
+          </div>
+          <div class="btns" style="display:flex; gap:8px">
+            <span class="pill">编辑技能</span>
+            <span class="pill pill-blue">去验证</span>
+          </div>
+        </div>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="lbl">自评熟练度</div>
+            <div class="val num">64 <small>置信度 0.2</small></div>
+          </div>
+          <div class="metric hot">
+            <div class="lbl">验证强度</div>
+            <div class="val num">32 <small>费曼 L2 · 置信度 0.8</small></div>
+          </div>
+          <div class="metric">
+            <div class="lbl">落差</div>
+            <div class="val num" style="color:var(--amber)">−32 <small>高估</small></div>
+          </div>
+          <div class="metric">
+            <div class="lbl">最近一次探测</div>
+            <div class="val" style="font-size:16px; font-weight:600">3 天前 <small>费曼教学</small></div>
+          </div>
+        </div>
+
+        <hr class="rule">
+
+        <div class="gridl1">
+          <!-- 证据时间线 -->
+          <div class="card">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px">
+              <div>
+                <div class="card-t">证据时间线</div>
+                <p class="small" style="margin-top:2px">真做出来的事，倒序。每条标来源与置信度 —— 缺口本身也是证据。</p>
+              </div>
+              <span class="seg"><span class="on">全部</span><span>只看验证</span></span>
+            </div>
+
+            <div class="tl" style="margin-top:20px">
+              <div class="tl-item">
+                <span class="tl-dot gap"></span>
+                <div>
+                  <div class="tl-head">
+                    <span class="tt" style="color:var(--muted)">缺失 · 没有模拟面试记录</span>
+                    <span class="when">过去 3 个月</span>
+                  </div>
+                  <p class="tl-body">这个技能从未在任何一次模拟面试中被问到或用上。缺口不是「0 分」，是<b style="color:var(--charcoal)">没测过</b>。</p>
+                </div>
+              </div>
+
+              <div class="tl-item">
+                <span class="tl-dot ai"></span>
+                <div>
+                  <div class="tl-head">
+                    <span class="tt">费曼教学 · 讲到 L2「字面理解」</span>
+                    <span class="when">3 天前</span>
+                    <span class="conf"><span class="meter ai"><i class="f"></i><i class="f"></i><i class="f"></i><i></i></span><span class="small">AI 判定 · 0.8</span></span>
+                  </div>
+                  <p class="tl-body">能复述「Attention = 加权求和」，但追问 <span class="quote">「为什么除以 √d」</span> 时卡住 —— 定级停在「能背定义、讲不出为什么」。</p>
+                </div>
+              </div>
+
+              <div class="tl-item">
+                <span class="tl-dot notes"></span>
+                <div>
+                  <div class="tl-head">
+                    <span class="tt">康奈尔笔记 · 6 步中 4 步有内容</span>
+                    <span class="when">1 周前</span>
+                    <span class="conf"><span class="meter notes"><i class="f"></i><i class="f"></i><i></i><i></i></span><span class="small">启发式 · 0.4</span></span>
+                  </div>
+                  <p class="tl-body">缺「用自己的话复述」和「遗留问题」两栏 —— 恰好是笔记里最接近「讲出来」的两栏。</p>
+                </div>
+              </div>
+
+              <div class="tl-item">
+                <span class="tl-dot obj"></span>
+                <div>
+                  <div class="tl-head">
+                    <span class="tt">面试题库 · 10 题 7 对（70）</span>
+                    <span class="when">2 周前</span>
+                    <span class="conf"><span class="meter obj"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></span><span class="small">客观判分 · 1.0</span></span>
+                  </div>
+                  <p class="tl-body">得分 70 高于自评 64 —— 但 10 道全是定义题，测的是「记住没有」，<b style="color:var(--charcoal)">不构成「讲得出来」的证据</b>。这也是它没有进入验证分的原因。</p>
+                </div>
+              </div>
+
+              <div class="tl-item">
+                <span class="tl-dot self"></span>
+                <div>
+                  <div class="tl-head">
+                    <span class="tt">自评 · 拖到 64</span>
+                    <span class="when">3 个月前</span>
+                    <span class="conf"><span class="meter self"><i class="f"></i><i></i><i></i><i></i></span><span class="small">自评 · 0.2</span></span>
+                  </div>
+                  <p class="tl-body">单次拖动，无依据。时间上它最早，可信度上它最低 —— 却一直是这一页唯一显示的数字。</p>
+                </div>
+              </div>
+            </div>
+
+            <hr class="rule">
+            <div class="ladder" style="margin-top:0">
+              <span class="lt small">置信度分层：</span>
+              <span class="lv">自评 <b>0.2</b></span><span class="lt">＜</span>
+              <span class="lv">笔记启发式 <b>0.4</b></span><span class="lt">＜</span>
+              <span class="lv">AI 判定 <b>0.8</b></span><span class="lt">＜</span>
+              <span class="lv">客观判分 <b>1.0</b></span>
+            </div>
+          </div>
+
+          <!-- 右列 -->
+          <div style="display:flex; flex-direction:column; gap:20px">
+            <div class="card plan">
+              <div class="ph">
+                <div>
+                  <div class="card-t">学习计划 · 决策书</div>
+                  <p class="small" style="margin-top:2px">计划不是待办清单，是决策：解决什么 / 花多少 / 不含什么。</p>
+                </div>
+                <span class="chip chip-blue">建议重排</span>
+              </div>
+              <div style="margin-top:14px">
+                <div class="zone">
+                  <div class="zl">① 解决什么问题</div>
+                  <p class="zt">从「能复述」到「能讲清为什么」。目标 = 费曼 <b>L3「关联」</b>，不是刷更多题。</p>
+                  <div class="skel w88"></div>
+                </div>
+                <div class="zone">
+                  <div class="zl">② 投入成本</div>
+                  <p class="zt">3 次费曼 × 25 分钟 + 1 次复刷 10 题 ≈ <b>1.5 小时</b> · 截止：面试前 3 天</p>
+                  <div class="skel w70"></div>
+                </div>
+                <div class="zone">
+                  <div class="zl">③ 边界（含什么 · 不含什么）</div>
+                  <p class="zt">含：positional encoding、multi-head 的动机。<b>不含：训练细节、分布式、变体论文</b> —— 备注已写明「仅需要知道框架和概念」。</p>
+                  <div class="skel w45"></div>
+                </div>
+              </div>
+              <p class="annot" style="margin-top:14px">
+                骨架示意：三分区由现有学习计划（多 Agent 评审产出）重排而来，追加「边界」一栏。
+              </p>
+            </div>
+
+            <div class="card">
+              <div class="card-t">三件套入口</div>
+              <p class="small" style="margin-top:2px">输入 → 加工 → 验证，三段闭环，各自产出可回看的证据。</p>
+              <div class="kit" style="margin-top:14px">
+                <div class="step">
+                  <span class="idx">01</span>
+                  <div>
+                    <div class="kt">AI 讲解</div>
+                    <div class="kd">输入 · 把边界内的概念先讲一遍</div>
+                  </div>
+                  <span class="go pill pill-sm">开始</span>
+                </div>
+                <div class="step">
+                  <span class="idx">02</span>
+                  <div>
+                    <div class="kt">康奈尔笔记</div>
+                    <div class="kd">加工 · 补上缺的「自己的话」与「问题」两栏</div>
+                  </div>
+                  <span class="go pill pill-sm">继续</span>
+                </div>
+                <div class="step next">
+                  <span class="idx">03</span>
+                  <div>
+                    <div class="kt">费曼教学 <span class="chip chip-blue">建议下一步</span></div>
+                    <div class="kd">验证 · 目标 L3，讲完落差会自己收敛</div>
+                  </div>
+                  <span class="go pill pill-sm pill-blue">去讲一遍</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= 05 L2 ======================= -->
+  <section class="sec" id="s5">
+    <div class="sec-h">
+      <span class="sec-idx">▸ 05</span>
+      <div>
+        <h2>L2 探测入口 · 复用现有页面，不改</h2>
+        <p class="sec-desc">从 L1 的动作按钮进入。三个页面都已存在且够用，本次重构不为它们改一行代码 —— 只在进入时带上技能上下文。</p>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="probe">
+        <div class="ph-row">
+          <h4>费曼教学</h4>
+          <span class="rt">/feynman</span>
+        </div>
+        <p>验证 · 深度。五级理解状态机 + 追问，产出等级与卡点，是落差的主证据来源。</p>
+        <div class="ph-box">现有页面 · 不重画<br><span style="font-size:11px">带 ?skill_id=18 进入即预选技能</span></div>
+      </div>
+      <div class="probe">
+        <div class="ph-row">
+          <h4>面试题库（刷题 / 考试）</h4>
+          <span class="rt">/quiz</span>
+        </div>
+        <p>验证 · 广度。选择题客观判分，置信度最高，用来给「记住没有」定钉子。</p>
+        <div class="ph-box">现有页面 · 不重画<br><span style="font-size:11px">带 ?skill_id=18 进入即预选技能</span></div>
+      </div>
+      <div class="probe">
+        <div class="ph-row">
+          <h4>康奈尔笔记</h4>
+          <span class="rt">技能详情内</span>
+        </div>
+        <p>加工 · 过程。证明你处理过内容，不证明你讲得出，折算分封顶 60。</p>
+        <div class="ph-box">现有页面 · 不重画<br><span style="font-size:11px">留在 L1 内联展开</span></div>
+      </div>
+    </div>
+
+    <p class="annot" style="margin-top:16px">
+      <b>本次唯一的结构性新增</b>：L0 仪表盘（新页面）+ L1 的证据时间线（现有详情页里的新板块）。
+      L2 三个页面零改动，只需要支持从 URL 带上技能上下文。
+    </p>
+  </section>
+
+  <!-- ======================= 06 关键信号 ======================= -->
+  <section class="sec" id="s6">
+    <div class="sec-h">
+      <span class="sec-idx">▸ 06</span>
+      <div>
+        <h2>关键信号说明</h2>
+        <p class="sec-desc">仪表盘上每个视觉信号的含义与算法依据。这一节是设计稿与实现之间的合同。</p>
+      </div>
+    </div>
+
+    <table class="sig">
+      <colgroup><col style="width:150px"><col style="width:266px"><col></colgroup>
+      <thead>
+        <tr><th>信号</th><th>视觉</th><th>含义与规格</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>落差 chip</td>
+          <td><span class="chip chip-red">−32 高估</span> <span class="chip chip-green">+33 低估</span> <span class="chip chip-neutral">+2 一致</span></td>
+          <td>
+            <code>落差 = 验证分 − 自评</code>。负值 = 高估（证据说你不像你以为的那么好），正值 = 低估。
+            分档：<b>≤ −25</b> 红（严重高估）· <b>−24…−10</b> 琥珀（高估）· <b>−9…+9</b> 中性（一致）· <b>≥ +10</b> 绿（低估）。
+            L0 的第一排序键就是这个值（升序，最负的在最上）。
+          </td>
+        </tr>
+        <tr>
+          <td>验证强度</td>
+          <td><span class="mono">L2 = 32</span> <span class="mono">笔记 = 40</span> <span class="mono">刷题 = 60</span></td>
+          <td>
+            折算规则：费曼 <b>L1–L5 → 16 / 32 / 48 / 64 / 80</b>（封顶 80：讲解是 AI 判定的主观证据，客观判分才有资格补满 100）·
+            刷题/考试 → 直接取得分 · 康奈尔笔记 → 完成步数 / 6 × 60。
+            取值优先级 <b>费曼 &gt; 刷题 &gt; 笔记</b>（先取最深的证据），<b>不做平均</b> —— 平均会把「10 题 7 对」和「讲不出来」抹成一个中等的 45，恰好把漏洞藏起来。
+          </td>
+        </tr>
+        <tr>
+          <td>未验证</td>
+          <td><span class="chip chip-ghost">○ 未验证</span></td>
+          <td>
+            没有任何证据 ≠ 0 分。它不进落差排序（没有 Y 值可减），单独成组，组内按自评降序 —— <b>自评越高，盲区越大</b>，所以自评满分的那两个排在最前。
+          </td>
+        </tr>
+        <tr>
+          <td>置信度分层</td>
+          <td>
+            <span class="ladder">
+              <span class="lv">自评 <b>0.2</b></span><span class="lt">＜</span>
+              <span class="lv">笔记启发式 <b>0.4</b></span><span class="lt">＜</span>
+              <span class="lv">AI 判定 <b>0.8</b></span><span class="lt">＜</span>
+              <span class="lv">客观判分 <b>1.0</b></span>
+            </span>
+          </td>
+          <td>
+            四个来源按「可复现程度」排序：自评（单次拖动，无依据）＜ 笔记启发式（结构完成度，可伪装）＜ AI 判定（费曼等级 + 追问，主观但一致）＜ 客观判分（选择题比对，可复现）。
+            时间线里每条证据都带这个刻度；落差只用 <b>≥ 0.8</b> 的信号计算 —— 自评和笔记不参与，它们本身是被检验的对象。
+          </td>
+        </tr>
+        <tr>
+          <td>缺失证据</td>
+          <td><span class="tl-dot gap" style="display:inline-block; margin:0"></span> <span class="small">缺口行</span></td>
+          <td>
+            时间线里的空位也是信号：一个技能 3 个月没有任何探测记录 = 状态不可信。用虚线空心点标记，不写成「0 分」，也不写成待办。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot">
+    <span>Resume Pro · 技能库页面导航重构设计 · v1 · 2026-10-03 · 基于 DESIGN.md 与 index.css @theme token</span>
+    <span>本稿为设计提案，非最终实现方案；L0 三个变体数据同源，可挑选或混搭。</span>
+  </div>
+
+</main>
+</body>
+</html>
