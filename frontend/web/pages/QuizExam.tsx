@@ -4,6 +4,7 @@ import { useQuizStore } from "@core/stores/quizStore";
 import QuestionCard from "@web/components/QuestionCard";
 import LoadingDots from "@web/components/LoadingDots";
 import AnimatedNumber from "@web/components/AnimatedNumber";
+import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { useEntrance, entrance } from "@web/hooks/useEntrance";
 
 const EXAM_DURATION = 45 * 60; // 45 minutes in seconds
@@ -137,6 +138,19 @@ export default function QuizExam() {
           >
             返回
           </button>
+          <button
+            onClick={() =>
+              exportQuestionsToPDF({
+                title: "模拟面试",
+                subtitle: `共 ${questions.length} 题 · 得分率 ${pct}%`,
+                questions,
+                answers,
+              })
+            }
+            className="bg-blue text-white rounded-full px-5 py-2 text-sm font-semibold hover:bg-blue/90 transition-all active:scale-95"
+          >
+            下载成绩单 PDF
+          </button>
         </div>
       </div>
     );
@@ -171,6 +185,12 @@ export default function QuizExam() {
             }`}>
               {timeStr}
             </span>
+            <button
+              onClick={() => exportQuestionsToPDF({ title: "模拟面试", subtitle: `共 ${questions.length} 题 · 45 分钟`, questions })}
+              className="text-xs text-blue border border-blue/30 rounded-full px-3 py-1 font-medium hover:bg-blue/[0.04] transition-all active:scale-95"
+            >
+              下载试卷
+            </button>
             <button
               onClick={handleSubmit}
               disabled={submitting}

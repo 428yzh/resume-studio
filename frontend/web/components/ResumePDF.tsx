@@ -12,7 +12,8 @@ const COLORS = {
 const styles = StyleSheet.create({
   page: {
     padding: "40px 48px",
-    fontFamily: "Helvetica",
+    // 见 pdfService.ts 的 Font.register：Helvetica 是单字节 WinAnsi 字体，中文会被截断成乱码
+    fontFamily: "NotoSansSC",
     fontSize: 10,
     color: COLORS.charcoal,
     lineHeight: 1.5,

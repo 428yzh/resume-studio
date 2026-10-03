@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuizStore } from "@core/stores/quizStore";
 import QuestionCard from "@web/components/QuestionCard";
 import LoadingDots from "@web/components/LoadingDots";
+import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { useEntrance, entrance } from "@web/hooks/useEntrance";
 
 export default function QuizSession() {
@@ -77,6 +78,19 @@ export default function QuizSession() {
           >
             查看答题记录
           </button>
+          <button
+            onClick={() =>
+              exportQuestionsToPDF({
+                title: "刷题练习",
+                subtitle: `共 ${questions.length} 题 · 正确 ${answers.filter((a) => a.is_correct === true).length} 题`,
+                questions,
+                answers,
+              })
+            }
+            className="bg-blue text-white rounded-full px-5 py-2 text-sm font-semibold hover:bg-blue/90 transition-all active:scale-95"
+          >
+            下载 PDF（含答案）
+          </button>
         </div>
       </div>
     );
@@ -103,6 +117,12 @@ export default function QuizSession() {
           <span className="text-xs text-muted bg-surface rounded-full px-3 py-1">
             倒计时 30:00
           </span>
+          <button
+            onClick={() => exportQuestionsToPDF({ title: "刷题练习", subtitle: `共 ${questions.length} 题`, questions })}
+            className="text-xs text-blue border border-blue/30 rounded-full px-3 py-1 font-medium hover:bg-blue/[0.04] transition-all active:scale-95"
+          >
+            下载空白题
+          </button>
         </div>
       </div>
 

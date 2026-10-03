@@ -4,6 +4,7 @@ import { useQuizStore } from "@core/stores/quizStore";
 import QuestionCard from "@web/components/QuestionCard";
 import LoadingDots from "@web/components/LoadingDots";
 import AnimatedNumber from "@web/components/AnimatedNumber";
+import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { useEntrance, entrance } from "@web/hooks/useEntrance";
 
 export default function QuizRecordDetail() {
@@ -35,12 +36,27 @@ export default function QuizRecordDetail() {
   return (
     <div className="max-w-3xl mx-auto">
       {/* Back link */}
-      <button
-        onClick={() => navigate("/quiz/records")}
-        className="text-sm text-slate hover:text-ink mb-6 transition-all inline-flex items-center gap-1 hover:gap-1.5 active:scale-95"
-      >
-        ← 答题记录
-      </button>
+      <div className="flex items-center justify-between mb-6">
+        <button
+          onClick={() => navigate("/quiz/records")}
+          className="text-sm text-slate hover:text-ink transition-all inline-flex items-center gap-1 hover:gap-1.5 active:scale-95"
+        >
+          ← 答题记录
+        </button>
+        <button
+          onClick={() =>
+            exportQuestionsToPDF({
+              title: modeLabel,
+              subtitle: `共 ${total_questions} 题 · 正确 ${correct_count} 题 · 得分率 ${score}%`,
+              questions,
+              answers,
+            })
+          }
+          className="text-xs text-blue border border-blue/30 rounded-full px-3 py-1 font-medium hover:bg-blue/[0.04] transition-all active:scale-95"
+        >
+          下载 PDF
+        </button>
+      </div>
 
       {/* Session info */}
       <div className="bg-canvas rounded-xl border border-hairline p-6 mb-8 transition-all duration-200 hover:border-blue/20" style={entrance(mounted, 0.05)}>
