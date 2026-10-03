@@ -1,16 +1,19 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
 
 const navItems = [
   { to: "/resumes", label: "简历管理" },
   { to: "/jd", label: "JD 分析" },
-  { to: "/mock-interview", label: "模拟面试" },
   { to: "/quiz", label: "面试题库" },
-  { to: "/feynman", label: "费曼教学" },
+  { to: "/mock-interview", label: "模拟面试" },
   { to: "/skills", label: "技能库" },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
+  // 「费曼复习」入口已挪进技能库页面。它仍是技能库下的功能，
+  // 所以停在 /feynman 时让「技能库」保持高亮，否则整个导航会没有任何一项点亮。
+  const feynmanOpen = useLocation().pathname.startsWith("/feynman");
+
   return (
     <div className="min-h-screen bg-surface">
       {/* Top Navigation */}
@@ -25,7 +28,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                   to={item.to}
                   className={({ isActive }) =>
                     `px-4 py-2 rounded-full text-sm font-medium transition-all active:scale-95 ${
-                      isActive
+                      isActive || (item.to === "/skills" && feynmanOpen)
                         ? "bg-blue text-white"
                         : "text-slate hover:text-ink hover:bg-surface"
                     }`

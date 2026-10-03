@@ -344,6 +344,11 @@ export default function LearningPanel({
   /* ── Links ── */
   const links = useMemo(() => extractLinks(explanation), [explanation]);
   const allTopicAnswers = Object.values(topicAnswers).join("\n\n");
+  // 知识点添加为资源时附带的引用链接（取讲解中的第一个），无则仅记录标题
+  const activeTopicLink = useMemo(
+    () => (activeTopic ? extractLinks(topicAnswers[activeTopic] || "")[0]?.url : undefined),
+    [activeTopic, topicAnswers]
+  );
 
   const handleAddLink = (title: string, url: string) => {
     if (onAddResource) onAddResource(title, url);
@@ -578,7 +583,8 @@ export default function LearningPanel({
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold text-blue">{activeTopic}</span>
                       <button
-                        onClick={() => { if (onAddResource) onAddResource(activeTopic); }}
+                        onClick={() => { if (onAddResource) onAddResource(activeTopic, activeTopicLink); }}
+                        title={activeTopicLink ? "添加为资源（附讲解中的引用链接）" : "该讲解暂无引用链接，仅记录标题"}
                         className="text-xs text-blue hover:text-blue/80 font-medium"
                       >
                         + 添加为资源
@@ -711,7 +717,7 @@ export default function LearningPanel({
                         }
                       }}
                       placeholder="在此记录详细笔记、摘抄要点、写下你的理解和关联..."
-                      className="w-full flex-1 min-h-[180px] text-sm text-charcoal leading-relaxed bg-transparent border-none outline-none placeholder:text-muted/40 resize-none overflow-hidden"
+                      className="w-full min-h-[180px] text-sm text-charcoal leading-relaxed bg-transparent border-none outline-none placeholder:text-muted/40 resize-none overflow-hidden"
                     />
                   </div>
                 </div>
