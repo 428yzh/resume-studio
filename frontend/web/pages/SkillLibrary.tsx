@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, Fragment } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSkillStore } from "@core/stores/skillStore";
 import { useQuizStore } from "@core/stores/quizStore";
@@ -6,7 +6,7 @@ import ConfirmDialog from "@web/components/ConfirmDialog";
 import LearningPanel from "@web/components/LearningPanel";
 import { GridIcon } from "@web/components/EmptyIcons";
 import { api } from "@core/api/client";
-import type { Skill } from "@core/models/skill";
+import type { Skill, GraphNode } from "@core/models/skill";
 import type { Question } from "@core/models/quiz";
 import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { calculateAllStepScores, calculateStepScore, loadCornellFromStorage } from "@core/services/scoring";
@@ -69,11 +69,13 @@ function EditSkillModal({
 
 export default function SkillLibrary() {
   const navigate = useNavigate();
-  const { skills, resources, questions, learningPlan, loadingPlan, loading, error, fetchSkills, addSkill, updateSkill, deleteSkill, fetchResources, addResource, updateResource, deleteResource, fetchQuestions, addQuestion, updateQuestion, deleteQuestion, fetchLearningPlan, generateLearningPlan } = useSkillStore();
+  const { skills, resources, questions, learningPlan, loadingPlan, loading, error, fetchSkills, addSkill, updateSkill, deleteSkill, fetchResources, addResource, updateResource, deleteResource, fetchQuestions, addQuestion, updateQuestion, deleteQuestion, fetchLearningPlan, generateLearningPlan, knowledgeGraph, graphSkillId, fetchGraph, generateGraph } = useSkillStore();
   const [activeCategory, setActiveCategory] = useState("全部");
   const [showForm, setShowForm] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [expandedSkill, setExpandedSkill] = useState<number | null>(null);
+  // 正在生成图谱的技能 id。store 的 loadingGraph 是全局的，卡片需要知道是不是「自己」在转
+  const [graphFor, setGraphFor] = useState<number | null>(null);
   // 新建时不带 proficiency：没自评过就存 NULL，用一个预填的 50 冒充自评是假数据
   const [formData, setFormData] = useState({ name: "", category: "前端", notes: "" });
   const [newResource, setNewResource] = useState({ title: "", url: "", type: "article" });
@@ -239,6 +241,7 @@ export default function SkillLibrary() {
     fetchResources(skillId);
     fetchQuestions(skillId);
     fetchLearningPlan(skillId);
+    fetchGraph(skillId);
     // Load step completion from localStorage
     try {
       const saved = localStorage.getItem(`learning_completed_${skillId}`);
@@ -259,6 +262,12 @@ export default function SkillLibrary() {
     } catch {
       // ignore
     }
+  };
+
+  const handleGenerateGraph = async (skillId: number) => {
+    setGraphFor(skillId);
+    await generateGraph(skillId);
+    setGraphFor(null);
   };
 
   const getProficiencyColor = (value: number | null) => {
@@ -330,6 +339,100 @@ export default function SkillLibrary() {
               <AnimatedProficiency value={val} />%
             </span>
           )}
+      </div>
+    );
+  }
+
+  /* ── 图谱树。⑦ 技能工作台会把它换成真正的主体视图，这里够用就行 ── */
+  function GraphTree({ nodes, depth = 0 }: { nodes: GraphNode[]; depth?: number }) {
+    return (
+      <ul className={depth === 0 ? "space-y-2" : "mt-1 space-y-1 border-l border-hairline pl-4"}>
+        {nodes.map((n) => (
+          <li key={n.id}>
+            <span className="text-xs text-charcoal">
+              <span className="text-muted mr-1.5 tabular-nums">{n.id}</span>
+              {n.title}
+            </span>
+            {n.children.length > 0 && <GraphTree nodes={n.children} depth={depth + 1} />}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  /* ── 技能卡片：回答三件事 —— 图谱长全了没 / 哪块虚 / 要练几步 ── */
+  function SkillCard({ skill, expanded, delay, generatingGraph, onToggle, onGenerateGraph, onEdit, onDelete }: {
+    skill: Skill;
+    expanded: boolean;
+    delay: number;
+    generatingGraph: boolean;
+    onToggle: () => void;
+    onGenerateGraph: () => void;
+    onEdit: () => void;
+    onDelete: () => void;
+  }) {
+    const catStyle =
+      skill.category === "前端" ? "bg-blue-light text-blue" :
+      skill.category === "后端" ? "bg-green/10 text-green" :
+      skill.category === "数据库" ? "bg-amber/10 text-amber" :
+      "bg-surface text-slate";
+
+    return (
+      <div
+        onClick={onToggle}
+        data-testid="skill-card"
+        style={{ opacity: 0, animation: `fade-in 0.3s ease-out ${0.12 + 0.04 * delay}s forwards` }}
+        className={`bg-canvas rounded-xl border p-5 cursor-pointer transition-colors ${
+          expanded ? "border-blue/40" : "border-hairline hover:border-blue/30"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-ink truncate">{skill.name}</h3>
+            <div className="flex items-center gap-2 mt-1">
+              {skill.category && (
+                <span className={`text-[11px] rounded-full px-2 py-0.5 font-medium ${catStyle}`}>{skill.category}</span>
+              )}
+              {skill.source && <span className="text-[11px] text-muted">{skill.source}</span>}
+            </div>
+          </div>
+          <span className={`shrink-0 text-[11px] rounded-full px-2.5 py-0.5 font-medium ${
+            skill.has_graph ? "bg-blue-light text-blue" : "bg-surface text-muted"
+          }`}>{skill.has_graph ? "已生成图谱" : "未生成图谱"}</span>
+        </div>
+
+        {/* 图谱覆盖率 —— 覆盖率衡量的是「测没测过」，要等 ⑥ 分数落回节点才有数 */}
+        <div className="mt-4">
+          <div className="flex items-center gap-2">
+            <span className="flex-1 h-1.5 rounded-full bg-surface" />
+            <span className="text-xs font-semibold text-muted">—</span>
+          </div>
+          <div className="text-[11px] text-muted mt-1.5">
+            图谱覆盖率 · {skill.has_graph ? "还没有节点被验证过" : "还没生成图谱"}
+          </div>
+        </div>
+
+        <p className="text-xs text-slate mt-3 leading-relaxed line-clamp-2">{skill.notes || "—"}</p>
+
+        <div className="mt-3 pt-3 border-t border-hairline" data-testid="skill-proficiency" onClick={(e) => e.stopPropagation()}>
+          <ProficiencySlider skill={skill} />
+        </div>
+
+        <div className="flex items-center gap-3 mt-3" onClick={(e) => e.stopPropagation()}>
+          {/* 已生成就不给重新生成：节点 id 是分数落点和笔记归属的锚，重生成会把它们全冲掉 */}
+          {!skill.has_graph && (
+            <button
+              onClick={onGenerateGraph}
+              disabled={generatingGraph}
+              title="AI 按技能备注生成知识图谱，再据此切分成学习单元"
+              className="bg-blue text-white rounded-full px-3.5 py-1.5 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {generatingGraph ? "生成中…" : "生成图谱"}
+            </button>
+          )}
+          <button onClick={onEdit} className="text-xs text-slate hover:text-blue transition-colors">编辑</button>
+          <button onClick={onDelete} className="text-xs text-red/60 hover:text-red transition-colors ml-auto">删除</button>
+        </div>
       </div>
     );
   }
@@ -444,65 +547,56 @@ export default function SkillLibrary() {
         </div>
       )}
 
-      {/* Skills table */}
+      {/* 技能卡片列表 */}
       {!loading && filteredSkills.length > 0 && (
-        <div className="border border-hairline rounded-lg overflow-hidden" style={entrance(mounted, 0.1)}>
-          <table className="w-full">
-            <thead>
-              <tr className="bg-surface text-xs text-muted uppercase tracking-wider">
-                <th className="text-left px-4 py-3 font-medium">技能名称</th>
-                <th className="text-left px-4 py-3 font-medium">分类</th>
-                <th className="text-left px-4 py-3 font-medium" title="这是你的自评，不是验证过的分数。没拖过滑块就是「未验证」">自评熟练度</th>
-                <th className="text-left px-4 py-3 font-medium">来源</th>
-                <th className="text-left px-4 py-3 font-medium">备注</th>
-                <th className="text-right px-4 py-3 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSkills.map((skill, si) => (
-                <Fragment key={skill.id}>
-                  <tr className="border-t border-hairline hover:bg-surface/50 transition-colors cursor-pointer" onClick={() => toggleExpand(skill.id)} style={{ opacity: 0, animation: `fade-in 0.3s ease-out ${0.12 + 0.04 * si}s forwards` }}>
-                    <td className="px-4 py-3 font-medium text-charcoal text-sm">{skill.name}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs rounded-full px-2.5 py-0.5 font-medium ${
-                        skill.category === "前端" ? "bg-blue-light text-blue" :
-                        skill.category === "后端" ? "bg-green/10 text-green" :
-                        skill.category === "数据库" ? "bg-amber/10 text-amber" :
-                        "bg-surface text-slate"
-                      }`}>
-                        {skill.category}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <ProficiencySlider skill={skill} />
-                    </td>
-                    <td className="px-4 py-3 text-sm text-slate">{skill.source || "-"}</td>
-                    <td className="px-4 py-3 text-sm text-slate max-w-[150px] truncate">{skill.notes || "-"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => setEditingSkill(skill)}
-                          className="text-xs text-slate hover:text-blue transition-colors"
+        <div style={entrance(mounted, 0.1)}>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {filteredSkills.map((skill, si) => (
+              <SkillCard
+                key={skill.id}
+                skill={skill}
+                expanded={expandedSkill === skill.id}
+                delay={si}
+                generatingGraph={graphFor === skill.id}
+                onToggle={() => toggleExpand(skill.id)}
+                onGenerateGraph={() => handleGenerateGraph(skill.id)}
+                onEdit={() => setEditingSkill(skill)}
+                onDelete={() => setDeleteSkillTarget(skill.id)}
+              />
+            ))}
+          </div>
+
+          {/* 展开的详细信息（整宽，落在卡片网格下方） */}
+          {(() => {
+            const skill = filteredSkills.find((s) => s.id === expandedSkill);
+            if (!skill) return null;
+            // 只在图谱确实属于当前技能时才渲染，否则展开 A 再展开 B 会闪出 A 的树
+            const ownGraph = graphSkillId === skill.id ? knowledgeGraph : null;
+            return (
+              <div className="mt-4 bg-canvas rounded-xl border border-blue/20 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2 bg-blue-light/20 text-xs text-blue font-medium border-b border-blue/10">
+                  <span>{skill.name} · 详细信息</span>
+                </div>
+                {/* 知识图谱 —— 技能工作台（实施顺序 ⑦）会把它做成主体，这里先够看 */}
+                {skill.has_graph && (
+                  <div className="px-4 py-3 border-b border-hairline" data-testid="skill-graph">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h4 className="text-sm font-semibold text-ink">知识图谱</h4>
+                      {ownGraph?.degraded && (
+                        <span
+                          title={`结构约束没满足：${ownGraph.issues.join("；")}`}
+                          className="text-[11px] rounded-full px-2 py-0.5 font-medium bg-amber/10 text-amber"
                         >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => setDeleteSkillTarget(skill.id)}
-                          className="text-xs text-red/60 hover:text-red transition-colors"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {expandedSkill === skill.id && (
-                    <tr key={`${skill.id}-details`} className="border-t border-hairline">
-                      <td colSpan={6} className="px-0 py-0">
-                        <div className="mx-4 mb-4 bg-canvas rounded-xl border border-blue/20 shadow-sm overflow-hidden">
-                          <div className="flex items-center gap-2 px-4 py-2 bg-blue-light/20 text-xs text-blue font-medium border-b border-blue/10">
-                            <span>详细信息</span>
-                          </div>
-                          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+                          结构降级
+                        </span>
+                      )}
+                    </div>
+                    {ownGraph?.nodes.length
+                      ? <GraphTree nodes={ownGraph.nodes} />
+                      : <p className="text-xs text-muted">加载中…</p>}
+                  </div>
+                )}
+                <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                           {/* Learning Resources */}
                           <div>
                             <div className="flex items-center justify-between mb-3">
@@ -985,6 +1079,10 @@ export default function SkillLibrary() {
                                   </div>
                                 )}
                               </div>
+                            ) : !skill.has_graph ? (
+                              <p className="text-sm text-muted">
+                                先点上面的「生成图谱」—— 学习计划是把知识图谱切分成学习单元得来的，没有图谱就没有可切的块。
+                              </p>
                             ) : (
                               <div className="bg-surface/50 rounded-lg border border-hairline p-4 space-y-3">
                                 <p className="text-sm text-muted">根据你的掌握程度和现状，生成个性化学习计划</p>
@@ -1027,13 +1125,8 @@ export default function SkillLibrary() {
                           </div>
                         </div>
                         </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+            );
+          })()}
         </div>
       )}
 
