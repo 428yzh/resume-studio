@@ -81,6 +81,7 @@ test.describe("Skill Library", () => {
   });
 
   // 自评不是默认值：新建时不预填、不落库，只有拖过滑块才算用户表态
+  // D1：滑块已移进展开区 —— 卡片正面整张可点展开，滑块留在正面等于把「点中心展开」变成「误改自评」
   test("new skill starts as 未验证, slider drag turns it into a real self-assessment", async ({ page }) => {
     const name = `E2E-未验证-${Date.now()}`;
 
@@ -88,15 +89,27 @@ test.describe("Skill Library", () => {
     const skill = await addSkill(page, name);
     expect(skill.proficiency).toBeNull();
 
-    const sliders = card(page, name).getByTestId("skill-proficiency");
+    // 卡片正面没有自评控件
+    const sliders = page.getByTestId("skill-proficiency");
+    await expect(sliders).toHaveCount(0);
+
+    // 点卡片中心 = 只展开，不碰数据（就是当初误把 未验证 改成 50 的那一下）
+    await card(page, name).click();
     await expect(sliders).toContainText("未验证");
 
+    // 等 PUT 落地再刷新 —— 拖完立刻 reload 会把在途请求掐掉（本地 state 已是 73%，看着像保存了）
+    const saved = page.waitForResponse(
+      (r) => r.url().includes(`/api/skills/${skill.id}`) && r.request().method() === "PUT",
+      { timeout: 5000 },
+    );
     await sliders.locator('input[type="range"]').fill("73");
     await sliders.locator('input[type="range"]').dispatchEvent("mouseup");
+    expect((await saved).status()).toBe(200);
     await expect(sliders).toContainText("73%");
 
     await page.reload({ waitUntil: "networkidle" });
-    await expect(card(page, name).getByTestId("skill-proficiency")).toContainText("73%");
+    await card(page, name).click();
+    await expect(page.getByTestId("skill-proficiency")).toContainText("73%");
 
     await card(page, name).getByRole("button", { name: "删除" }).click();
     await page.getByRole("button", { name: "确认删除" }).click();

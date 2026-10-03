@@ -416,10 +416,6 @@ export default function SkillLibrary() {
 
         <p className="text-xs text-slate mt-3 leading-relaxed line-clamp-2">{skill.notes || "—"}</p>
 
-        <div className="mt-3 pt-3 border-t border-hairline" data-testid="skill-proficiency" onClick={(e) => e.stopPropagation()}>
-          <ProficiencySlider skill={skill} />
-        </div>
-
         <div className="flex items-center gap-3 mt-3" onClick={(e) => e.stopPropagation()}>
           {/* 已生成就不给重新生成：节点 id 是分数落点和笔记归属的锚，重生成会把它们全冲掉 */}
           {!skill.has_graph && (
@@ -576,8 +572,14 @@ export default function SkillLibrary() {
             const ownGraph = graphSkillId === skill.id ? knowledgeGraph : null;
             return (
               <div className="mt-4 bg-canvas rounded-xl border border-blue/20 overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-2 bg-blue-light/20 text-xs text-blue font-medium border-b border-blue/10">
+                <div className="flex items-center justify-between gap-3 px-4 py-2 bg-blue-light/20 text-xs text-blue font-medium border-b border-blue/10">
                   <span>{skill.name} · 详细信息</span>
+                  {/* 自评只在展开区（D1）：卡片正面整张可点展开，滑块放正面等于把「点中心展开」
+                      变成「误改自评」—— 实测把本技能从「未验证」改成了 50 */}
+                  <div className="flex items-center gap-1.5 shrink-0" data-testid="skill-proficiency">
+                    <span className="text-[11px] font-normal text-blue/70">自评</span>
+                    <ProficiencySlider skill={skill} />
+                  </div>
                 </div>
                 {/* 知识图谱 —— 技能工作台（实施顺序 ⑦）会把它做成主体，这里先够看 */}
                 {skill.has_graph && (
