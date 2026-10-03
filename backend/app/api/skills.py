@@ -4,11 +4,12 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_db
-from app.models.skill import Skill, LearningResource, InterviewQuestion
+from app.models.skill import Skill, LearningResource, InterviewQuestion, SkillNote
 from app.schemas.skill import (
     SkillCreate, SkillUpdate, SkillResponse,
     LearningResourceCreate, LearningResourceUpdate, LearningResourceResponse,
     InterviewQuestionCreate, InterviewQuestionUpdate, InterviewQuestionResponse,
+    SkillNoteUpsert, SkillNoteResponse,
 )
 from app.services.ai_service import generate_learning_plan, generate_knowledge_graph
 
@@ -102,6 +103,30 @@ async def delete_resource(skill_id: int, resource_id: int, db: AsyncSession = De
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="资源不存在")
     await db.commit()
+
+
+@router.get("/{skill_id}/notes", response_model=list[SkillNoteResponse])
+async def list_notes(skill_id: int, db: AsyncSession = Depends(get_db)):
+    """一个技能的全部笔记。笔记是自动保存的、没有提交按钮，服务端拿不到原文就做不了复盘（⑤）"""
+    result = await db.execute(select(SkillNote).where(SkillNote.skill_id == skill_id))
+    return result.scalars().all()
+
+
+@router.put("/{skill_id}/notes", response_model=SkillNoteResponse)
+async def upsert_note(skill_id: int, data: SkillNoteUpsert, db: AsyncSession = Depends(get_db)):
+    """PUT 覆盖而非 POST 追加：同一块图谱内容只该有一条笔记（自动保存，每次覆盖前一版）"""
+    result = await db.execute(
+        select(SkillNote).where(SkillNote.skill_id == skill_id, SkillNote.unit_key == data.unit_key)
+    )
+    note = result.scalar_one_or_none()
+    if note:
+        note.cornell = data.cornell
+    else:
+        note = SkillNote(skill_id=skill_id, unit_key=data.unit_key, cornell=data.cornell)
+        db.add(note)
+    await db.commit()
+    await db.refresh(note)
+    return note
 
 
 @router.get("/{skill_id}/questions", response_model=list[InterviewQuestionResponse])

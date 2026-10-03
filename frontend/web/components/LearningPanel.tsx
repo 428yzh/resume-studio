@@ -4,6 +4,8 @@ import FloatingNote from "./FloatingNote";
 import HighlightableMarkdown from "./HighlightableMarkdown";
 import { contentHighlightKey } from "@core/services/highlights";
 import { isUnavailable } from "@core/services/aiDegrade";
+import { findCornell, loadCornellFromStorage } from "@core/services/scoring";
+import { useSkillStore } from "@core/stores/skillStore";
 import type { GraphNode } from "@core/models/skill";
 import AIErrorBox from "./AIErrorBox";
 
@@ -63,9 +65,6 @@ function explainKey(skillId: number, stepNum: number) {
 }
 function topicKey(skillId: number, stepNum: number, topic: string) {
   return `topic__${skillId}__step${stepNum}__${topic}`;
-}
-function cornellKey(skillId: number, stepNum: number) {
-  return `cornell__${skillId}__step${stepNum}`;
 }
 function promptsKey(skillId: number, stepNum: number) {
   return `cornell_prompts__${skillId}__step${stepNum}`;
@@ -141,6 +140,7 @@ export default function LearningPanel({
 
 
   /* ── Cornell ── */
+  const { fetchNotes, saveNote } = useSkillStore();
   const [prompts, setPrompts] = useState<string[]>([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [cornell, setCornell] = useState<CornellData>({ cues: [], notes: "", summary: "" });
@@ -164,17 +164,23 @@ export default function LearningPanel({
 
   /* ── Keys ── */
   const eKey = useMemo(() => explainKey(skillId, step.stepNumber), [skillId, step.stepNumber]);
-  const cKey = useMemo(() => cornellKey(skillId, step.stepNumber), [skillId, step.stepNumber]);
   const pKey = useMemo(() => promptsKey(skillId, step.stepNumber), [skillId, step.stepNumber]);
   const aKey = useMemo(() => activeTopicKey(skillId, step.stepNumber), [skillId, step.stepNumber]);
   const tkKey = useMemo(() => topicsKey(skillId, step.stepNumber), [skillId, step.stepNumber]);
 
+  /* 笔记挂在哪一块：有图谱就按节点 id，老计划退回步骤号。跟后端 unit_key 同一个约定 */
+  const unitKey = useMemo(
+    () => (step.nodeIds?.length ? step.nodeIds.join(",") : `step${step.stepNumber}`),
+    [step.nodeIds, step.stepNumber]
+  );
+
   /* ── Save timer ── */
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 笔记存服务端（不再进 localStorage）：留在浏览器里，服务端拿不到原文，复盘（⑤）就无从谈起
   const saveCornell = useCallback((data: CornellData) => {
-    try { localStorage.setItem(cKey, JSON.stringify(data)); } catch { /* ignore */ }
-  }, [cKey]);
+    saveNote(skillId, unitKey, JSON.stringify(data)).catch(() => { /* 自动保存失败不打断，下次改动再存 */ });
+  }, [skillId, unitKey, saveNote]);
 
   /* ── Mount / unmount animation ── */
   useEffect(() => {
@@ -199,16 +205,17 @@ export default function LearningPanel({
       else { setExplanationLoading(true); }
     } catch { setExplanationLoading(true); }
 
-    // 2. Load Cornell from localStorage
-    try {
-      const saved = localStorage.getItem(cKey);
-      if (saved) {
-        const parsed = JSON.parse(saved) as CornellData;
-        setCornell(parsed);
-      } else {
-        setCornell({ cues: [], notes: "", summary: "" });
-      }
-    } catch { setCornell({ cues: [], notes: "", summary: "" }); }
+    // 2. Load Cornell from server
+    let alive = true;
+    (async () => {
+      const mine = findCornell(await fetchNotes(skillId), unitKey);
+      if (!alive) return; // 切到别的单元了，别把上一条笔记按到这个单元头上（会被自动保存写错位置）
+      if (mine) { setCornell(mine); return; }
+      // 服务端还没有 —— 认领浏览器里的老笔记（搬服务端之前写的），推上去，别让用户白写
+      const legacy = loadCornellFromStorage(skillId, step.stepNumber);
+      setCornell(legacy ?? { cues: [], notes: "", summary: "" });
+      if (legacy) saveNote(skillId, unitKey, JSON.stringify(legacy)).catch(() => {});
+    })();
 
     // 3. Load topic keywords from cache, then topic answers (剔除历史降级文案，点击时重新请求)
     let kw: string[] = [];
@@ -254,8 +261,9 @@ export default function LearningPanel({
     } else {
       setPromptsLoading(false);
     }
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, skillId, step.stepNumber, tkKey]);
+  }, [visible, skillId, unitKey, step.stepNumber, tkKey]);
 
   /* ── Auto-save cornell ── */
   useEffect(() => {
@@ -762,7 +770,7 @@ export default function LearningPanel({
               </div>
 
               <p className="text-xs text-muted/60 mt-2">
-                ✎ 笔记已自动保存至本地
+                ✎ 笔记已自动保存
                 {cornell.cues.some((c) => c?.trim()) && ` · 线索 ${cornell.cues.filter((c) => c?.trim()).length} 条`}
                 {cornell.notes.trim() && ` · 笔记 ${cornell.notes.length} 字`}
                 {cornell.summary.trim() && ` · 总结 ${cornell.summary.length} 字`}

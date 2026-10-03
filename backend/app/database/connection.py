@@ -36,7 +36,7 @@ async def init_db():
         from app.models.template import ResumeTemplate  # noqa
         from app.models.jd_analysis import JDAnalysis  # noqa
         from app.models.job import Job  # noqa
-        from app.models.skill import Skill, LearningResource, InterviewQuestion  # noqa
+        from app.models.skill import Skill, LearningResource, InterviewQuestion, SkillNote  # noqa
         from app.models.quiz import Question, QuizSession, QuizAnswer  # noqa
         from app.models.mock_interview import MockInterview, MockInterviewMessage  # noqa
         from app.models.feynman import FeynmanTopic, FeynmanMessage, FeynmanProblem  # noqa

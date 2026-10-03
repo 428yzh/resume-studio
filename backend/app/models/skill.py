@@ -36,6 +36,25 @@ class LearningResource(Base):
     completed = Column(Boolean, default=False)
 
 
+class SkillNote(Base):
+    """学习笔记（Cornell 笔记原文）。搬服务端是为了让 AI 能复盘（⑤）——
+    笔记留在浏览器里，服务端拿不到原文，复盘就无从谈起。"""
+
+    __tablename__ = "skill_notes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    skill_id = Column(Integer, ForeignKey("skills.id", ondelete="CASCADE"), nullable=False)
+    # 这条笔记属于图谱的哪一块：node_ids 逗号连接（了解档一个单元合并多个顶层节点 → "4,5"）。
+    # 不用学习计划的步骤号：重新切分计划（换 required_level）会让旧步骤号指向别的内容，
+    # 笔记就静默错位了（待决策 D9）。图谱生成一次后不再重生成（A5），节点 id 才是稳定锚。
+    # 老计划没有 node_ids，用 "step{n}" 兜底 —— 反正那时也没别的可指。
+    unit_key = Column(String(100), nullable=False)
+    # JSON {cues, notes, summary}。存 Text 不存 JSON 列：跟本表其余 JSON 字段一致，
+    # 且笔记只整体读写，不按字段查询
+    cornell = Column(Text, default="")
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class InterviewQuestion(Base):
     __tablename__ = "interview_questions"
 

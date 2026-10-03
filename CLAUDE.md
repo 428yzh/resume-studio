@@ -39,7 +39,7 @@
 | PDF | @react-pdf/renderer v4 | A4 简历 + 试题导出。**必须走 `NotoSansSC` 字体**，见下方「PDF 中文字体」 |
 | 状态管理 | Zustand v5 | 零 DOM 依赖 |
 | 数据库 | SQLite + aiosqlite | 异步，无需额外部署 |
-| 测试 | pytest + httpx + vitest + Playwright | 后端 110 / 前端 55 / E2E 8 |
+| 测试 | pytest + httpx + vitest + Playwright | 后端 113 / 前端 57 / E2E 8 |
 
 ## 架构
 
@@ -114,7 +114,7 @@
 │  │    /api/feynman       → feynman.py (五级教学房间 + SSE + PPT)  │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
-│  ┌─ models/ (13 张表) ─────────┐   ┌─ schemas/ (7 个模块) ─────┐  │
+│  ┌─ models/ (14 张表) ─────────┐   ┌─ schemas/ (7 个模块) ─────┐  │
 │  │  Resume                     │   │  resume / template         │  │
 │  │  ResumeTemplate             │   │  jd / skill / job          │  │
 │  │  JDAnalysis                 │   │  quiz / feynman            │  │
@@ -146,9 +146,9 @@
 │  │                  SQLite 数据库 (resume_app.db)                │  │
 │  │  resumes | templates | jd_analyses | skills | jobs |         │  │
 │  │  learning_resources | interview_questions | questions |      │  │
-│  │  quiz_sessions | quiz_answers | mock_interviews |            │  │
-│  │  mock_interview_messages | feynman_topics |                  │  │
-│  │  feynman_messages | feynman_problems                         │  │
+│  │  skill_notes | quiz_sessions | quiz_answers |                │  │
+│  │  mock_interviews | mock_interview_messages |                 │  │
+│  │  feynman_topics | feynman_messages | feynman_problems        │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -282,6 +282,8 @@ GET    /api/skills/:id/resources        → 学习资源列表
 POST   /api/skills/:id/resources        → 添加资源
 PUT    /api/skills/:id/resources/:rid   → 更新资源
 DELETE /api/skills/:id/resources/:rid   → 删除资源
+GET    /api/skills/:id/notes            → 笔记列表（Cornell 原文，按 unit_key=图谱节点 id 归属）
+PUT    /api/skills/:id/notes            → 覆盖某块内容的笔记（自动保存，无提交按钮）
 GET    /api/skills/:id/questions        → 面试题列表
 POST   /api/skills/:id/questions        → 添加面试题
 PUT    /api/skills/:id/questions/:qid   → 更新面试题
@@ -359,6 +361,7 @@ PUT    /api/feynman/topics/:id/problems/:pid    → 标记解决 / 重开 {statu
 | **skills** | id, name, category, proficiency(0-100, **nullable; NULL=未验证**), source, notes, learned_at, created_at, learning_plan, knowledge_graph(JSON, **nullable; NULL=未生成图谱**) | 技能库。`has_graph` 是模型上的 property，只暴露布尔不给树。**`learning_plan` 由图谱切分得出**（steps 带 `node_ids` 指向顶层节点，每节点恰好被覆盖一次），无图谱时 `POST /learning-plan` 返回 409 |
 | **learning_resources** | id, skill_id(FK), title, url, type, completed | 学习资源 |
 | **interview_questions** | id, skill_id(FK), question, answer, difficulty | 面试题 |
+| **skill_notes** | id, skill_id(FK, CASCADE), unit_key, cornell(JSON 文本), updated_at | Cornell 笔记原文。`unit_key` = 图谱节点 id 逗号连接（`"4,5"` 是了解档合并的单元），老计划退回 `"step{n}"` —— **不用步骤号**：重新切分会让旧笔记静默错位。同 (skill_id, unit_key) 只有一条，PUT 覆盖 |
 | **jobs** | id, title, company, city, salary, experience, education, jd, url, created_at | 岗位推荐缓存（DeepSeek 联网搜索） |
 | **questions** | id, type(single_choice/multi_choice/essay), question_text, options(JSON), correct_answer, skill_ids(JSON), jd_analysis_id(FK, SET NULL), created_at | AI 生成的题目 |
 | **quiz_sessions** | id, mode(practice/exam), question_ids(JSON), status(in_progress/completed), score, total_questions, correct_count, started_at, completed_at | 答题场次 |
@@ -482,7 +485,7 @@ require("fontkit").openSync("frontend/public/fonts/NotoSansSC-Regular.woff").has
 
 ## 测试体系
 
-详见 `tests/TEST_PLAN.md`。当前 **173 tests**（后端 110 + 前端 55 + E2E 8）。
+详见 `tests/TEST_PLAN.md`。当前 **178 tests**（后端 113 + 前端 57 + E2E 8）。
 
 **覆盖盲区（已知，待补）**：
 - 后端 `quiz.py` 全部 8 个 endpoint、`mock_interview.py` 全部 6 个 endpoint **零测试**
@@ -540,15 +543,16 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 - **当前阶段**：Phase 9 已完成，进入**收尾/加固期**（修 bug + 补测试 + 清死代码）
 - **开发模式**：TDD
 - **上次开发讨论**：2026-10-03
-- **技能模块设计纪要**：`design/2026-10-03 技能模块设计纪要.md`（分数机制定稿 / 页面架构 / 16 条遗留 / 9 步实施顺序，① 已完成）
+- **技能模块设计纪要**：`design/2026-10-03 技能模块设计纪要.md`（分数机制定稿 / 页面架构 / 16 条遗留 / 9 步实施顺序，**①②③④ 已完成**；⑤ 复盘 → ⑥ 分数落回节点 → ⑦ 技能工作台 → ⑨ 仪表盘待做）
+- **技能模块待决策清单**：`design/2026-10-03 技能模块待决策清单.md`（D1–D15 + A1–A8；**D1 / D9 已落地，D8 前提有误已更正**）
 - **上次代码审计**：2026-09-19
 
 ### 完成状态
 
 | 模块 | 进度 | 测试 |
 |------|------|------|
-| **后端 API** | 100% | 110/110 ✅ |
-| **前端 core 层** | 100% | 55/55 ✅ |
+| **后端 API** | 100% | 113/113 ✅ |
+| **前端 core 层** | 100% | 57/57 ✅ |
 | **前端 UI 层** | 100% | — |
 | **E2E 测试** | 部分 | 8/8 ✅（仅覆盖 3/6 导航） |
 | **部署 (Docker)** | 100% | — |
@@ -618,23 +622,29 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 
 - 前端 bundle 单 chunk 2.16MB（gzip 691KB），Vite 已警告未做 code-split；`client.ts` 同时被静态+动态 import，动态那条不会分包
 
-**📦 localStorage → 服务端迁移（2026-10-03 定 · 大项 · 未开工）**
+**📦 localStorage → 服务端迁移（2026-10-03 定 · ✅ 笔记部分已落地 / 缓存类仍留在浏览器）**
 
-学习数据散在浏览器 localStorage 是早期图快的产物，现在同时挡住三件事 —— **是一件事，不是三件**：
+学习数据散在浏览器 localStorage 是早期图快的产物，挡住的是**三件事背后的同一件事**：
 
-| 被挡住的功能 | 为什么被挡 |
-|---|---|
-| 笔记 AI 复盘（原「判卷」，见下） | 复盘需要提交动作；笔记现在是自动保存、无提交点，服务端拿不到原文 |
-| 用户自输入知识点的语境拼接 | 边界/笔记不在服务端，prompt 拼不出上下文 |
-| 技能仪表盘的证据聚合 | 笔记是最弱、但唯一免费的一条证据，现在只活在浏览器里 |
+| 被挡住的功能 | 为什么被挡 | 现在 |
+|---|---|---|
+| 笔记 AI 复盘（原「判卷」，见下） | 复盘需要拿到笔记原文，服务端拿不到 | ✅ 通了（`skill_notes`） |
+| 用户自输入知识点的语境拼接 | 笔记/边界不在服务端，prompt 拼不出上下文 | ⬜ 该功能本身还没做（见下「更正」） |
+| 技能仪表盘的证据聚合 | 笔记是最弱、但唯一免费的一条证据 | 🚧 表已就位，等 ⑥ |
 
-**要搬的 key**（定义在 `core/services/scoring.ts` + `web/components/LearningPanel.tsx`）：
+**只搬了 `cornell__{skillId}__step{n}`（笔记原文）到 `skill_notes` 表**，其余全部**判断为不必搬**：
 
-- 必需：`cornell__{skillId}__step{n}`（笔记原文）、`explain_topics__{skillId}__step{n}`（知识点关键词）
-- 缓存类，顺带搬可省 AI 调用：`topic__*`、`explain__*`、`cornell_prompts__*`、`sticky__*` / `_pos`
-- `hl__*`（划词高亮）不在本次范围
+- `explain_topics__*` —— 原以为要搬，实际它是**单元概述返回的 AI 关键词缓存**（`cacheSet` 写的），不是用户输入；③ 之后深入讲解入口改用图谱子节点，它连入口都不是了，只剩步骤卡上的装饰标签。AI 产出的东西重生成即可，属于缓存。
+- `topic__*` / `explain__*` / `cornell_prompts__*` / `sticky__*` / `_pos` —— 纯 AI 缓存 / 浮窗位置，搬了只省 AI 调用，不改能做什么。
+- `hl__*`（划词高亮）—— 本来就不在范围。
 
-**明确不做：向量数据库。** 单用户 / 13 技能 / 几十条笔记的量级，SQLite FTS5 或直接 `LIKE` 够用；上下文拼接要的是按 `skill_id` / `step` 取**结构化字段**，不是语义检索。等真出现「跨技能找相关笔记」的查询需求再议。
+> ⚠️ **更正**：本节原先写「必需：`explain_topics__`（用户自输入知识点）」，是把它当成了用户输入。它一直是 AI 输出。D8「用户自输入知识点」讲的**是一个还没做的功能**（没有任何 UI 能让用户输入知识点），不是待迁移的数据。别照 D8 去加 `user_topics` 列。
+
+**笔记的归属键是图谱节点 id，不是步骤号**（待决策 D9）：`skill_notes.unit_key` 存 `"4,5"`（了解档一个单元合并多个顶层节点）或 `"2"`；老计划没有 `node_ids` 时退回 `"step{n}"`。步骤号会随重新切分（换 `required_level`）指向别的内容，旧笔记就静默错位了；图谱生成一次后不再重生成（A5），节点 id 才是稳定锚。前端 `core/models/skill.ts::unitKeyOf` 与后端 `unit_key` 是**同一个约定，改一边就得改另一边**。
+
+**老笔记不丢**：面板打开时若服务端还没有这条，就把浏览器里 `cornell__{skillId}__step{n}` 的旧笔记认领上来推一次，之后归服务端管。
+
+**明确不做：向量数据库。** 单用户 / 13 技能 / 几十条笔记的量级，SQLite FTS5 或直接 `LIKE` 够用；上下文拼接要的是按 `skill_id` / `unit_key` 取**结构化字段**，不是语义检索。等真出现「跨技能找相关笔记」的查询需求再议。
 
 **约束**：不要造「上下文管理系统」抽象 —— 照 `backend/app/api/quiz.py::_skill_context()` 的做法按需拼字符串。
 
@@ -665,7 +675,7 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 **后端 (10 个核心文件)**
 - `backend/app/main.py` — FastAPI 入口，**10 个 router 挂载**
 - `backend/app/api/` — **10 个路由模块** (health/resumes/templates/jd_analysis/skills/ai/jobs/quiz/mock_interview/feynman)
-- `backend/app/models/` — **13 张 SQLAlchemy 表** (resume/template/jd_analysis/skill/job/quiz 3 张/mock_interview 2 张/feynman 3 张)
+- `backend/app/models/` — **14 张 SQLAlchemy 表** (resume/template/jd_analysis/skill 4 张/job/quiz 3 张/mock_interview 2 张/feynman 3 张)
 - `backend/app/schemas/` — 7 个 Pydantic schema 模块
 - `backend/app/services/ai_service.py` — DeepSeek API (润色/分析/出题/面试/讲解/OCR) + 多 Agent 评审管线（Agent 基类 + 资深讲师/模拟用户评审 + review_pipeline 棘轮循环）
 - `backend/app/services/job_service.py` — DeepSeek 联网搜索岗位 (web_search_20250305 工具 + 结构化解析)

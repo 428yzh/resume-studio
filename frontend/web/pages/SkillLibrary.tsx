@@ -6,10 +6,10 @@ import ConfirmDialog from "@web/components/ConfirmDialog";
 import LearningPanel from "@web/components/LearningPanel";
 import { GridIcon } from "@web/components/EmptyIcons";
 import { api } from "@core/api/client";
-import { findNodes, type Skill, type GraphNode } from "@core/models/skill";
+import { findNodes, unitKeyOf, type Skill, type GraphNode } from "@core/models/skill";
 import type { Question } from "@core/models/quiz";
 import { exportQuestionsToPDF } from "@core/services/pdfService";
-import { calculateAllStepScores, calculateStepScore, loadCornellFromStorage } from "@core/services/scoring";
+import { calculateAllStepScores, calculateStepScore, findCornell } from "@core/services/scoring";
 import AIErrorBox from "@web/components/AIErrorBox";
 import LoadingDots from "@web/components/LoadingDots";
 import { isUnavailable, hasUnavailableField } from "@core/services/aiDegrade";
@@ -69,7 +69,7 @@ function EditSkillModal({
 
 export default function SkillLibrary() {
   const navigate = useNavigate();
-  const { skills, resources, questions, learningPlan, loadingPlan, loading, error, fetchSkills, addSkill, updateSkill, deleteSkill, fetchResources, addResource, updateResource, deleteResource, fetchQuestions, addQuestion, updateQuestion, deleteQuestion, fetchLearningPlan, generateLearningPlan, knowledgeGraph, graphSkillId, fetchGraph, generateGraph } = useSkillStore();
+  const { skills, resources, questions, learningPlan, loadingPlan, loading, error, fetchSkills, addSkill, updateSkill, deleteSkill, fetchResources, addResource, updateResource, deleteResource, fetchQuestions, addQuestion, updateQuestion, deleteQuestion, fetchLearningPlan, generateLearningPlan, knowledgeGraph, graphSkillId, fetchGraph, generateGraph, notes, fetchNotes } = useSkillStore();
   const [activeCategory, setActiveCategory] = useState("全部");
   const [showForm, setShowForm] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
@@ -109,14 +109,21 @@ export default function SkillLibrary() {
     fetchSkills();
   }, []);
 
-  /* Recalculate step scores when learningPlan loads for the expanded skill */
+  /* Recalculate step scores when learningPlan loads for the expanded skill.
+     笔记已搬服务端，分数得等笔记拉回来才能算 */
   useEffect(() => {
     if (!expandedSkill || !learningPlan || !learningPlan.steps.length) return;
-    const result = calculateAllStepScores(expandedSkill, learningPlan.steps);
-    const scoresMap: Record<number, number> = {};
-    result.stepScores.forEach((s) => { scoresMap[s.step] = s.score; });
-    setStepScores((prev) => ({ ...prev, [expandedSkill]: scoresMap }));
-  }, [learningPlan, expandedSkill]);
+    let alive = true;
+    (async () => {
+      const fetched = await fetchNotes(expandedSkill);
+      if (!alive) return; // 展开切到别的技能了，别拿旧结果覆盖
+      const result = calculateAllStepScores(fetched, learningPlan.steps);
+      const scoresMap: Record<number, number> = {};
+      result.stepScores.forEach((s) => { scoresMap[s.step] = s.score; });
+      setStepScores((prev) => ({ ...prev, [expandedSkill]: scoresMap }));
+    })();
+    return () => { alive = false; };
+  }, [learningPlan, expandedSkill, fetchNotes]);
 
   const filteredSkills = activeCategory === "全部"
     ? skills
@@ -163,7 +170,8 @@ export default function SkillLibrary() {
         [skillId]: { ...(prev[skillId] || {}), [step]: 100 },
       }));
     } else {
-      const cornell = loadCornellFromStorage(skillId, step);
+      const stepObj = useSkillStore.getState().learningPlan?.steps.find((s) => s.step === step);
+      const cornell = stepObj ? findCornell(notes, unitKeyOf(stepObj)) : null;
       const score = cornell ? calculateStepScore(cornell).score : 0;
       setStepScores((prev) => ({
         ...prev,
@@ -1155,10 +1163,9 @@ export default function SkillLibrary() {
             const sid = learningPanel.skillId;
             const plan = useSkillStore.getState().learningPlan;
             if (plan && plan.steps.length > 0) {
-              const result = calculateAllStepScores(sid, plan.steps);
               const scoresMap: Record<number, number> = {};
               // 手动标记完成的步骤覆盖为满分
-              result.stepScores.forEach((s) => { scoresMap[s.step] = getStepScore(sid, s.step); });
+              plan.steps.forEach((s) => { scoresMap[s.step] = getStepScore(sid, s.step); });
               setStepScores((prev) => ({ ...prev, [sid]: scoresMap }));
             }
             // 只关动画不卸载：后台生成中的讲解/知识点请求继续，重开面板时加载状态保留

@@ -11,7 +11,7 @@ export interface LearningPlan {
 import { create } from "zustand";
 import { api } from "@core/api/client";
 import { hasUnavailableField } from "@core/services/aiDegrade";
-import type { Skill, SkillCreate, LearningResource, LearningResourceCreate, InterviewQuestion, InterviewQuestionCreate, KnowledgeGraph } from "@core/models/skill";
+import type { Skill, SkillCreate, LearningResource, LearningResourceCreate, InterviewQuestion, InterviewQuestionCreate, KnowledgeGraph, SkillNote } from "@core/models/skill";
 import type { JDAnalysis, JDAnalysisListItem } from "@core/models/jd";
 
 interface SkillState {
@@ -26,6 +26,10 @@ interface SkillState {
   knowledgeGraph: KnowledgeGraph | null;
   graphSkillId: number | null; // knowledgeGraph 属于哪个技能：展开 A 再展开 B，不能再拿 A 的树渲染 B
   loadingGraph: boolean;
+  /** 当前技能的笔记（含那块内容的 Cornell 原文） */
+  notes: SkillNote[];
+  /** notes 属于哪个技能 —— 同 learningPlanSkillId / graphSkillId，防跨技能串用 */
+  notesSkillId: number | null;
   loading: boolean;
   error: string | null;
 
@@ -50,6 +54,8 @@ interface SkillState {
   generateLearningPlan: (skillId: number, requiredLevel: string, priorUnderstanding?: string) => Promise<void>;
   fetchGraph: (skillId: number) => Promise<KnowledgeGraph | null>;
   generateGraph: (skillId: number) => Promise<void>;
+  fetchNotes: (skillId: number) => Promise<SkillNote[]>;
+  saveNote: (skillId: number, unitKey: string, cornell: string) => Promise<void>;
   importSkillFromJD: (name: string, category: string, source: string) => Promise<Skill | null>;
 }
 
@@ -65,6 +71,8 @@ export const useSkillStore = create<SkillState>((set) => ({
   knowledgeGraph: null,
   graphSkillId: null,
   loadingGraph: false,
+  notes: [],
+  notesSkillId: null,
   loading: false,
   error: null,
 
@@ -320,6 +328,27 @@ export const useSkillStore = create<SkillState>((set) => ({
     } catch (e) {
       set({ error: (e as Error).message, loadingGraph: false });
     }
+  },
+
+  fetchNotes: async (skillId: number) => {
+    try {
+      const notes = await api.get<SkillNote[]>(`/api/skills/${skillId}/notes`);
+      set({ notes, notesSkillId: skillId });
+      return notes;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return [];
+    }
+  },
+
+  saveNote: async (skillId: number, unitKey: string, cornell: string) => {
+    // PUT 覆盖：自动保存每次覆盖前一版，同一块内容只留一条
+    const saved = await api.put<SkillNote>(`/api/skills/${skillId}/notes`, { unit_key: unitKey, cornell });
+    // 本地补上，省一次全量刷新（步骤环的分数直接读这个数组）
+    set((s) => ({
+      notes: [...s.notes.filter((n) => n.unit_key !== unitKey), saved],
+      notesSkillId: skillId,
+    }));
   },
 
   importSkillFromJD: async (name: string, category: string, source: string) => {

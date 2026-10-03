@@ -61,6 +61,21 @@ class LearningResourceUpdate(BaseModel):
     completed: bool | None = None
 
 
+class SkillNoteUpsert(BaseModel):
+    """unit_key：这条笔记挂在哪一块图谱上（node_ids 逗号连接 / 老计划 "step{n}"）"""
+    unit_key: str
+    # JSON {cues, notes, summary}，原样存原样取 —— 服务端只有在复盘时才拆开读 notes 字段
+    cornell: str = ""
+
+
+class SkillNoteResponse(BaseModel):
+    unit_key: str
+    cornell: str
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 class InterviewQuestionResponse(BaseModel):
     id: int
     skill_id: int

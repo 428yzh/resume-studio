@@ -9,6 +9,8 @@
  *   为空   → 0
  */
 
+import { unitKeyOf, type SkillNote } from "@core/models/skill";
+
 const THRESHOLDS = {
   cues: 50,    // 线索栏字数阈值
   notes: 200,  // 笔记栏字数阈值
@@ -74,7 +76,8 @@ export function calculateStepScore(cornell: CornellNotes): Omit<StepScore, 'step
   };
 }
 
-/** 从 localStorage 读取某个步骤的 Cornell 笔记 */
+/** 读取浏览器里的旧笔记（搬服务端之前写的）。只在服务端还没有这条时用来认领一次，
+ *  认领完就归服务端管 —— 留着这个函数是为了别把用户写过的笔记丢在浏览器里 */
 export function loadCornellFromStorage(skillId: number, stepNumber: number): CornellNotes | null {
   try {
     const raw = localStorage.getItem(`cornell__${skillId}__step${stepNumber}`);
@@ -85,13 +88,24 @@ export function loadCornellFromStorage(skillId: number, stepNumber: number): Cor
   }
 }
 
-/** 计算技能全部步骤的得分 */
+/** 某块内容的笔记。按 unit_key（节点 id）找，不再按步骤号 */
+export function findCornell(notes: SkillNote[], unitKey: string): CornellNotes | null {
+  const raw = notes.find((n) => n.unit_key === unitKey)?.cornell;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as CornellNotes;
+  } catch {
+    return null;
+  }
+}
+
+/** 计算技能全部单元的得分 */
 export function calculateAllStepScores(
-  skillId: number,
-  steps: { step: number }[],
+  notes: SkillNote[],
+  steps: { step: number; node_ids?: string[] }[],
 ): ScoringResult {
   const stepScores: StepScore[] = steps.map((s) => {
-    const cornell = loadCornellFromStorage(skillId, s.step);
+    const cornell = findCornell(notes, unitKeyOf(s));
     const base = cornell
       ? calculateStepScore(cornell)
       : { score: 0, details: { cuesChars: 0, cuesScore: 0, notesChars: 0, notesScore: 0, summaryChars: 0, summaryScore: 0 } };

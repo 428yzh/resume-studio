@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Resume } from "../core/models/resume";
 import type { ResumeTemplate } from "../core/models/template";
-import { findNodes, type Skill, type GraphNode } from "../core/models/skill";
+import { findNodes, unitKeyOf, type Skill, type GraphNode } from "../core/models/skill";
 import type { JDAnalysis } from "../core/models/jd";
 
 describe("TC-MODEL-001: Resume interface", () => {
@@ -56,6 +56,19 @@ describe("TC-MODEL-003: Skill interface", () => {
     };
     expect(skill.name).toBe("React");
     expect(skill.proficiency).toBe(80);
+  });
+});
+
+describe("TC-MODEL-006: unitKeyOf 笔记挂在哪一块", () => {
+  // 这个约定前后端各写一份（后端是 skill_notes.unit_key），改一边就得改另一边
+  it("有图谱节点就用节点 id 逗号连接（了解档一个单元合并多个顶层节点）", () => {
+    expect(unitKeyOf({ step: 1, node_ids: ["2"] })).toBe("2");
+    expect(unitKeyOf({ step: 4, node_ids: ["4", "5"] })).toBe("4,5");
+  });
+
+  it("老计划没有 node_ids，退回步骤号", () => {
+    expect(unitKeyOf({ step: 7 })).toBe("step7");
+    expect(unitKeyOf({ step: 7, node_ids: [] })).toBe("step7");
   });
 });
 

@@ -72,6 +72,11 @@ tests/
 - TC-SKILL-003: PUT /api/skills/:id 更新技能
 - TC-SKILL-004: DELETE /api/skills/:id 删除技能
 
+### TC-NOTE 系列（笔记搬服务端，test_skills.py）
+- TC-NOTE-001: 存了能原样读回来（中文不坏）；没存过是空列表
+- TC-NOTE-002: 同一块内容是**覆盖**不追加（自动保存每次落库不该攒副本）；换一块是新增
+- TC-NOTE-003: 删技能笔记跟着走 —— 直接数表验证 FK 级联（走端点会「技能不存在也返回空列表」，测不出来）
+
 ### TC-GRAPH 系列（知识图谱，test_knowledge_graph.py）
 - TC-GRAPH-001: 合格树通过校验（4 顶层 × 4 子 = 20 节点）
 - TC-GRAPH-002: 顶层节点数越界（<4 或 >6）被拦
@@ -152,6 +157,7 @@ tests/
 - TC-MODEL-003: Skill 接口结构正确
 - TC-MODEL-004: JDAnalysis 接口结构正确
 - TC-MODEL-005: `findNodes` 从图谱取单元分到的那块 —— 带子树 / 按图谱顺序 / 二层命中 / 找不到是空数组（镜像后端 `_find_nodes`）
+- TC-MODEL-006: `unitKeyOf` 笔记归属键 —— 有节点 id 用 `"4,5"` / `"2"`，老计划退回 `"step7"`（前后端同一个约定）
 
 ### TC-STORE 系列
 - TC-STORE-RESUME-001: ResumeStore 创建简历
