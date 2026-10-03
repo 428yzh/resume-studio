@@ -14,7 +14,15 @@ class Skill(Base):
     notes = Column(Text, default="")
     learned_at = Column(DateTime, nullable=True)
     learning_plan = Column(Text, default="")  # JSON：AI 学习计划
+    # JSON：AI 生成的知识图谱（严格树）。NULL = 还没生成 —— 卡片据此显示「未生成图谱」，
+    # 所以它必须能和「生成了一张空图」区分开，不能用 "" 当默认值
+    knowledge_graph = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+    @property
+    def has_graph(self) -> bool:
+        """卡片靠它显示「已生成图谱」，不必为了一个布尔拉整棵树（20-30 节点 × N 个技能）"""
+        return bool(self.knowledge_graph)
 
 
 class LearningResource(Base):

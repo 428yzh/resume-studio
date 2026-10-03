@@ -29,6 +29,9 @@ class SkillResponse(BaseModel):
     notes: str
     learned_at: Optional[datetime] = None
     created_at: datetime
+    # 是否已生成知识图谱。只给布尔不给树：列表页要的是「生成过没有」，
+    # 整棵树等展开时再单独 GET /graph
+    has_graph: bool = False
 
     model_config = {"from_attributes": True}
 

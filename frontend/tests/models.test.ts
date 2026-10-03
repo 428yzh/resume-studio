@@ -52,6 +52,7 @@ describe("TC-MODEL-003: Skill interface", () => {
       notes: "",
       learned_at: null,
       created_at: "2026-01-01T00:00:00Z",
+      has_graph: false,
     };
     expect(skill.name).toBe("React");
     expect(skill.proficiency).toBe(80);

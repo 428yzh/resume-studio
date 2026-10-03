@@ -352,38 +352,58 @@ def _guide_system_prompt(request: dict) -> str:
 - **直接输出 JSON，不要任何开场白。**"""
 
 
-_PLAN_SYSTEM_PROMPT = """你是一位技术学习路径设计师。根据技能名称和要求的掌握程度，生成个性化学习计划，返回 JSON：
-{
-  "required_level": "要求的掌握程度",
+def _plan_system_prompt(request: dict) -> str:
+    """学习计划生成器人设。计划不是凭空排的，而是**把知识图谱切分成学习单元**（结论 9）。
+
+    单元数由图谱顶层节点数决定，不再由 required_level 拍脑袋定 —— 图谱已经编码了
+    这门技能的粒度，掌握程度该影响的是**每个单元多深**，不是把同一块内容重新切一遍。
+    """
+    level = request.get("required_level", "熟悉")
+    graph = request.get("graph") or []
+    depth = {
+        "了解": "每个单元只求扫盲：核心概念 + 术语，够用就行",
+        "熟悉": "每个单元给常用做法 + 实用技巧，配一个小练习",
+        "精通": "每个单元深入原理与边界情况，含调试排错和性能取舍",
+    }.get(level, "每个单元给常用做法 + 实用技巧")
+    merge = (
+        "- 单元数 2-4 个：把相邻的顶层节点合并进同一个单元\n"
+        if level == "了解"
+        else f"- 单元数 {min(4, len(graph))}-{len(graph)} 个：顶层节点与单元基本一一对应\n"
+    )
+    return f"""你是一位技术学习路径设计师。学习计划**不是凭空排的** —— 它是把下面这棵知识图谱**切分成学习单元**。
+
+【知识图谱】（格式：`id  标题`，缩进表示层级）
+{_render_graph_for_prompt(graph)}
+
+【切分规则 · 必须全部满足】
+- 每个学习单元 = 图谱的**一块**，用 `node_ids` 声明它覆盖了哪些**顶层**节点
+- `node_ids` 里**只能出现顶层节点 id**（如 "1" "3"），不要引用 "1.2" 这类子节点
+- **每个顶层节点必须被覆盖恰好一次** —— 不许漏掉任何一个，也不许两个单元抢同一个
+{merge}- 当前要求的掌握程度是「{level}」：{depth}
+
+【输出 JSON，直接输出，不要任何开场白】
+{{
+  "required_level": "{level}",
   "steps": [
-    {
+    {{
       "step": 1,
       "type": "concept",
-      "title": "步骤标题（动词开头 + 具体主题）",
-      "description": "学习内容说明",
+      "node_ids": ["1"],
+      "title": "单元标题（动词开头 + 具体主题）",
+      "description": "这个单元学什么、为什么排在这个顺序，50-100 字",
       "estimated_hours": 5
-    }
+    }}
   ],
   "milestones": ["学完后应能达成的能力"]
-}
+}}
 
-每个 step 必须指定 type，可选值：
-- "concept" — 概念型：理解核心概念、原理、理论（如"理解 RESTful API 设计原则"）
-- "practice" — 操作型：动手实践、写作、编码（如"写一个支持分页的 API 接口"）
-- "analysis" — 分析型：分析案例、对比方案、评估（如"分析优秀 PRD 案例"）
-- "tool" — 工具型：学习工具/框架/平台用法（如"熟悉 Git 分支操作"）
-- "reading" — 阅读型：阅读文档、资料、书籍（如"阅读 React 官方文档"）
+每个 step 必须指定 type：concept（概念原理）· practice（动手实践）· analysis（分析对比）· tool（工具用法）· reading（阅读资料）
 
-根据 required_level 调整学习深度：
-- "了解" → 基础概念、术语、2-4 步，总时长 < 20h
-- "熟悉" → 常用 API 和最佳实践、4-6 步，总时长 20-40h
-- "精通" → 深入原理、源码、性能优化、6-10 步，总时长 40-80h
-
-注意：所有内容必须用**中文**输出，不要生成 resources 字段。"""
+所有内容用**中文**输出，不要生成 resources 字段。"""
 
 
 _guide_gen = Agent("学习指引", _guide_system_prompt)
-_plan_gen = Agent("学习计划", _PLAN_SYSTEM_PROMPT)
+_plan_gen = Agent("学习计划", _plan_system_prompt)
 
 
 async def polish_resume(section_title: str, content: str, target_position: str = "") -> str:
@@ -1023,33 +1043,220 @@ async def explain_topic(
         return {"explanation": f"### {step_title or topic}\n\nAI 服务暂不可用，请稍后再试。", "topic_keywords": []}
 
 
-async def generate_learning_plan(skill_name: str, required_level: str, prior_understanding: str = "") -> dict:
-    """AI 生成学习计划（含中文资源推荐），走资深讲师 + 模拟用户双评审"""
+# ─── 知识图谱 ─────────────────────────────────────────────────────────────
+# 图谱是技能级的、**严格的树**（设计纪要结论 13）：交叉引用会让父节点被重复计数，
+# 「分数自下而上累加」就不成立了。所以约束写死在这，不用 DAG。
+#
+# 树容量（结论 14）写进 prompt 是硬要求，但模型基本都会超（实测会出 5 层的树、顶层 9 个节点）。
+# 所以配一个**结构校验器** —— 这是刻意不开评审 agent 的地方：树的约束是可代码判定的，
+# 拿 2 次 AI 调用去检查一个 for 循环能查的东西是纯烧钱。评审 agent 该留给判不了的东西
+# （比如讲解写得好不好）。
+_GRAPH_SYSTEM_PROMPT = """你是知识图谱设计师。为指定技能生成一棵**严格的知识树**。
+
+【硬约束 · 必须全部满足，输出前先自查】
+- 严格树：每个节点只有一个父节点，节点之间**不允许交叉引用**
+- 层数 ≤ 3（顶层算第 1 层）
+- 顶层节点 4-6 个
+- 每个非叶节点 3-5 个子节点
+- 总节点数 20-30
+
+【节点命名】
+- 写**概括级条目**，不是具体问题
+- 好：「工具的实现方式」「上下文管理」  坏：「如何注册一个工具？」「什么是 ReAct 循环？」
+- 全中文
+
+【输出 JSON，不要任何解释】
+{"nodes": [{"title": "顶层条目", "children": [{"title": "第二层条目", "children": [{"title": "第三层条目", "children": []}]}]}]}"""
+
+_MAX_DEPTH = 3
+_TOP_MIN, _TOP_MAX = 4, 6
+_KIDS_MIN, _KIDS_MAX = 3, 5
+_TOTAL_MIN, _TOTAL_MAX = 20, 30
+
+
+def _count_nodes(nodes: list) -> int:
+    return sum(1 + _count_nodes(n.get("children") or []) for n in nodes if isinstance(n, dict))
+
+
+def _validate_graph(nodes: list) -> list[str]:
+    """校验图谱结构，返回问题清单（空 = 合格）。只查可代码判定的容量约束。"""
+    issues: list[str] = []
+
+    def walk(node: dict, depth: int) -> None:
+        kids = [k for k in (node.get("children") or []) if isinstance(k, dict)]
+        title = node.get("title", "?")
+        if depth >= _MAX_DEPTH:
+            if kids:
+                issues.append(f"超过 {_MAX_DEPTH} 层：「{title}」下面还有节点")
+        elif kids and not (_KIDS_MIN <= len(kids) <= _KIDS_MAX):
+            issues.append(f"第 {depth} 层「{title}」有 {len(kids)} 个子节点，应为 {_KIDS_MIN}-{_KIDS_MAX}")
+        for k in kids:
+            walk(k, depth + 1)
+
+    if not (_TOP_MIN <= len(nodes) <= _TOP_MAX):
+        issues.append(f"顶层 {len(nodes)} 个节点，应为 {_TOP_MIN}-{_TOP_MAX}")
+    for n in nodes:
+        if isinstance(n, dict):
+            walk(n, 1)
+    total = _count_nodes(nodes)
+    if not (_TOTAL_MIN <= total <= _TOTAL_MAX):
+        issues.append(f"总节点 {total} 个，应为 {_TOTAL_MIN}-{_TOTAL_MAX}")
+    return issues
+
+
+def _assign_ids(nodes: list, prefix: str = "") -> list[dict]:
+    """服务端分配稳定 id：1 / 1.2 / 1.2.3。
+
+    不能让模型自己编号 —— 它会重复、会漂，而这 id 是分数落点和笔记归属的锚
+    （结论 12：分数加在下层节点上），必须稳。
+    """
+    out = []
+    for i, n in enumerate(nodes, 1):
+        nid = f"{prefix}.{i}" if prefix else str(i)
+        out.append({
+            "id": nid,
+            "title": str(n.get("title", "")).strip(),
+            "children": _assign_ids([k for k in (n.get("children") or []) if isinstance(k, dict)], nid),
+        })
+    return out
+
+
+def _render_graph_for_prompt(nodes: list, depth: int = 0) -> str:
+    """把图谱渲染成缩进文本给 AI 看。id 必须出现在 prompt 里 —— 切分依据就是 id。"""
+    lines = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        lines.append("  " * depth + f"{n.get('id', '?')}  {n.get('title', '')}")
+        kids = _render_graph_for_prompt(n.get("children") or [], depth + 1)
+        if kids:
+            lines.append(kids)
+    return "\n".join(lines)
+
+
+async def generate_knowledge_graph(skill_name: str, notes: str = "") -> dict:
+    """AI 生成技能知识图谱。结构不合格重试一次，仍不合格则接受并标 degraded。
+
+    返回 {"nodes": [...], "degraded": bool, "issues": [...]}。
+    degraded=True 的图谱仍可用，但父节点累加会偏 —— 必须让调用方看得见，不能静默当成功。
+    """
     client = _get_client()
     if not client:
+        return {"nodes": [], "degraded": False, "issues": ["AI 服务未配置"]}
+
+    # 语境只取备注，不带 category —— 同 quiz.py::_skill_context()：category 是自由分类，
+    # 实测 12 条里 5 条是错误默认值，当判据会把 AI 带偏
+    context = f"{skill_name}（{notes}）" if notes.strip() else skill_name
+    agent = Agent("知识图谱", _GRAPH_SYSTEM_PROMPT)
+    graph: list = []
+    issues: list[str] = []
+
+    for attempt in range(2):
+        msg = f"技能：{context}"
+        if issues:
+            msg += "\n\n上一次生成有以下结构问题，请修正后重新输出整棵树：\n- " + "\n- ".join(issues)
+        raw = await agent.call(msg, json_mode=True, max_tokens=8192)  # 20-30 节点 JSON，1000 必截断
+        data = _parse_json_defensive(raw) if raw else {}
+        nodes = data.get("nodes") if isinstance(data, dict) else None
+        if not isinstance(nodes, list) or not nodes:
+            issues = ["返回内容不是合法 JSON，或缺少 nodes 数组"]
+            continue
+        issues = _validate_graph(nodes)
+        if not issues:
+            return {"nodes": _assign_ids(nodes), "degraded": False, "issues": []}
+        logger.warning(f"知识图谱结构不合格（第 {attempt + 1}/2 次）：{issues}")
+        graph = nodes
+
+    return {"nodes": _assign_ids(graph), "degraded": True, "issues": issues}
+
+
+def _validate_plan_coverage(steps: list, top_ids: list[str]) -> list[str]:
+    """校验学习单元对图谱顶层节点的覆盖：不重、不漏、id 都真实存在。
+
+    和 `_validate_graph` 同一个理由 —— 覆盖是**代码可判定**的，不用烧 AI 调用去问评审 agent。
+    漏掉一个顶层节点 = 那块知识永远不会被安排学，必须拦。
+    """
+    issues: list[str] = []
+    valid = set(top_ids)
+    seen: list[str] = []
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        title = s.get("title", "?")
+        ids = [i for i in (s.get("node_ids") or []) if isinstance(i, str)]
+        if not ids:
+            issues.append(f"单元「{title}」的 node_ids 是空的，没覆盖任何顶层节点")
+            continue
+        unknown = [i for i in ids if i not in valid]
+        if unknown:
+            issues.append(f"单元「{title}」引用了不存在的节点 {unknown}，只能用顶层节点 id {top_ids}")
+        seen.extend(i for i in ids if i in valid)
+    dup = sorted({i for i in seen if seen.count(i) > 1})
+    if dup:
+        issues.append(f"顶层节点被多个单元重复覆盖：{dup}")
+    missing = [i for i in top_ids if i not in seen]
+    if missing:
+        issues.append(f"有顶层节点没有任何单元覆盖：{missing}")
+    return issues
+
+
+async def generate_learning_plan(
+    skill_name: str,
+    required_level: str,
+    prior_understanding: str = "",
+    graph: list | None = None,
+) -> dict:
+    """AI 生成学习计划 —— 把知识图谱切分成学习单元（结论 8/9：图谱先生成，计划据图切分）。
+
+    `graph` 是 `POST /api/skills/:id/graph` 落库后读回的那棵树（id 已由服务端分配）。
+    覆盖不合格重试一次，仍不合格则接受并带上 coverage_issues —— 一份漏了一个单元的
+    真计划，仍好过 _default_learning_plan 那份硬编码占位。
+    """
+    client = _get_client()
+    graph = graph or []
+    if not client or not graph:
         return _default_learning_plan(skill_name)
 
-    request = {"skill_name": skill_name, "required_level": required_level, "prior_understanding": prior_understanding}
+    top_ids = [n["id"] for n in graph if isinstance(n, dict) and "id" in n]
+    request = {
+        "skill_name": skill_name,
+        "required_level": required_level,
+        "prior_understanding": prior_understanding,
+        "graph": graph,
+    }
     review_ctx = f"要求掌握程度：{required_level}；学习者现状：{prior_understanding or '无'}；学习目标：掌握 {skill_name}"
+    extra = ""
 
     def build_msg(feedback: str) -> str:
-        return f"技能：{skill_name}\n要求掌握程度：{required_level}\n我的现状理解：{prior_understanding}".rstrip() + _feedback_block(feedback)
+        base = f"技能：{skill_name}\n要求掌握程度：{required_level}\n我的现状理解：{prior_understanding}".rstrip()
+        return base + _feedback_block(feedback) + extra
 
-    content, _ = await review_pipeline(
-        _plan_gen,
-        build_msg,
-        [(_lecturer, review_ctx), (_sim_user, review_ctx)],
-        request=request,
-        json_mode=True,
-        # 推理模型会把预算先烧在思考上，大技能（6-10 步 JSON）1000 必截断，截断 JSON 解析失败会静默降级
-        max_tokens=8192,
-    )
-    result = _parse_json_defensive(content) if content else {}
+    best: dict = {}
+    for attempt in range(2):
+        content, _ = await review_pipeline(
+            _plan_gen,
+            build_msg,
+            [(_lecturer, review_ctx), (_sim_user, review_ctx)],
+            request=request,
+            json_mode=True,
+            # 推理模型会把预算先烧在思考上，大技能（6-10 步 JSON）1000 必截断，截断 JSON 解析失败会静默降级
+            max_tokens=8192,
+        )
+        result = _parse_json_defensive(content) if content else {}
+        if not result.get("steps"):
+            extra = "\n\n上一次没有产出合法的 steps 数组，请重新输出完整 JSON。"
+            continue
+        issues = _validate_plan_coverage(result["steps"], top_ids)
+        if not issues:
+            return result
+        logger.warning(f"学习计划覆盖不合格（第 {attempt + 1}/2 次）：{issues}")
+        best = result
+        extra = "\n\n上一次的单元切分有以下问题，请修正后重新输出完整计划：\n- " + "\n- ".join(issues)
 
-    if not result.get("steps"):
-        result = _default_learning_plan(skill_name)
-
-    return result
+    if best:
+        best["coverage_issues"] = _validate_plan_coverage(best["steps"], top_ids)
+        return best
+    return _default_learning_plan(skill_name)
 
 
 def _default_jd_analysis(jd_text: str) -> dict:

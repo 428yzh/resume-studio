@@ -64,3 +64,9 @@ async def init_db():
             ))
         except OperationalError:
             pass  # column already exists
+        try:
+            await conn.execute(text(
+                "ALTER TABLE skills ADD COLUMN knowledge_graph TEXT"
+            ))
+        except OperationalError:
+            pass  # column already exists

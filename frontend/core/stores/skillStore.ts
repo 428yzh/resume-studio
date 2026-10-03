@@ -1,13 +1,17 @@
 export interface LearningPlan {
   required_level: string;
-  steps: { step: number; type?: string; title: string; description: string; estimated_hours: number; topics: string[] }[];
+  /** node_ids = 这个单元覆盖了图谱的哪几个顶层节点（结论 9：一个单元 = 图谱的一块）。
+   *  可选：② 之前生成的 9 个旧计划没有这个字段，不必迁移（结论 33）。 */
+  steps: { step: number; type?: string; title: string; description: string; estimated_hours: number; topics: string[]; node_ids?: string[] }[];
   milestones: string[];
+  /** 覆盖没通过校验时的缺口清单，正常为 undefined */
+  coverage_issues?: string[];
 }
 
 import { create } from "zustand";
 import { api } from "@core/api/client";
 import { hasUnavailableField } from "@core/services/aiDegrade";
-import type { Skill, SkillCreate, LearningResource, LearningResourceCreate, InterviewQuestion, InterviewQuestionCreate } from "@core/models/skill";
+import type { Skill, SkillCreate, LearningResource, LearningResourceCreate, InterviewQuestion, InterviewQuestionCreate, KnowledgeGraph } from "@core/models/skill";
 import type { JDAnalysis, JDAnalysisListItem } from "@core/models/jd";
 
 interface SkillState {
@@ -19,6 +23,9 @@ interface SkillState {
   learningPlan: LearningPlan | null;
   learningPlanSkillId: number | null; // learningPlan 属于哪个技能，防止跨技能串用
   loadingPlan: boolean;
+  knowledgeGraph: KnowledgeGraph | null;
+  graphSkillId: number | null; // knowledgeGraph 属于哪个技能：展开 A 再展开 B，不能再拿 A 的树渲染 B
+  loadingGraph: boolean;
   loading: boolean;
   error: string | null;
 
@@ -41,6 +48,8 @@ interface SkillState {
   deleteQuestion: (skillId: number, questionId: number) => Promise<void>;
   fetchLearningPlan: (skillId: number) => Promise<void>;
   generateLearningPlan: (skillId: number, requiredLevel: string, priorUnderstanding?: string) => Promise<void>;
+  fetchGraph: (skillId: number) => Promise<KnowledgeGraph | null>;
+  generateGraph: (skillId: number) => Promise<void>;
   importSkillFromJD: (name: string, category: string, source: string) => Promise<Skill | null>;
 }
 
@@ -53,6 +62,9 @@ export const useSkillStore = create<SkillState>((set) => ({
   learningPlan: null,
   learningPlanSkillId: null,
   loadingPlan: false,
+  knowledgeGraph: null,
+  graphSkillId: null,
+  loadingGraph: false,
   loading: false,
   error: null,
 
@@ -279,6 +291,34 @@ export const useSkillStore = create<SkillState>((set) => ({
     } catch (e) {
       // 生成失败也退回输入表单：不留降级/旧计划在视图里卡住重试
       set({ learningPlan: null, learningPlanSkillId: skillId, error: (e as Error).message, loadingPlan: false });
+    }
+  },
+
+  fetchGraph: async (skillId: number) => {
+    try {
+      const graph = await api.get<KnowledgeGraph | null>(`/api/skills/${skillId}/graph`);
+      set({ knowledgeGraph: graph, graphSkillId: skillId });
+      return graph;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  generateGraph: async (skillId: number) => {
+    if (useSkillStore.getState().loadingGraph) return; // 已在生成，防重复触发（一次要十几秒）
+    set({ loadingGraph: true, error: null });
+    try {
+      const graph = await api.post<KnowledgeGraph>(`/api/skills/${skillId}/graph`, {});
+      if (!graph.nodes.length) {
+        set({ loadingGraph: false, error: "AI 服务暂不可用，请稍后再试" });
+        return;
+      }
+      set({ knowledgeGraph: graph, graphSkillId: skillId, loadingGraph: false });
+      // 列表里的 has_graph 是生成前拉的，本地补上，省一次全量刷新
+      set((s) => ({ skills: s.skills.map((k) => (k.id === skillId ? { ...k, has_graph: true } : k)) }));
+    } catch (e) {
+      set({ error: (e as Error).message, loadingGraph: false });
     }
   },
 

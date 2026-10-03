@@ -10,7 +10,7 @@ from app.schemas.skill import (
     LearningResourceCreate, LearningResourceUpdate, LearningResourceResponse,
     InterviewQuestionCreate, InterviewQuestionUpdate, InterviewQuestionResponse,
 )
-from app.services.ai_service import generate_learning_plan
+from app.services.ai_service import generate_learning_plan, generate_knowledge_graph
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -152,6 +152,34 @@ async def delete_question(skill_id: int, question_id: int, db: AsyncSession = De
     await db.commit()
 
 
+@router.get("/{skill_id}/graph")
+async def get_knowledge_graph(skill_id: int, db: AsyncSession = Depends(get_db)):
+    """读取知识图谱。未生成返回 null（卡片据此显示「未生成图谱」）。"""
+    result = await db.execute(select(Skill).where(Skill.id == skill_id))
+    skill = result.scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="技能不存在")
+    import json
+    return json.loads(skill.knowledge_graph) if skill.knowledge_graph else None
+
+
+@router.post("/{skill_id}/graph")
+async def create_knowledge_graph(skill_id: int, db: AsyncSession = Depends(get_db)):
+    """AI 生成并保存知识图谱（技能级，生成一次）。"""
+    result = await db.execute(select(Skill).where(Skill.id == skill_id))
+    skill = result.scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="技能不存在")
+
+    graph = await generate_knowledge_graph(skill.name, skill.notes or "")
+    # 空图谱不落库：失败态不该污染持久化，重进页面仍是「未生成图谱」
+    if graph["nodes"]:
+        import json
+        skill.knowledge_graph = json.dumps(graph, ensure_ascii=False)
+        await db.commit()
+    return graph
+
+
 @router.get("/{skill_id}/learning-plan")
 async def get_learning_plan(skill_id: int, db: AsyncSession = Depends(get_db)):
     """获取技能的 AI 学习计划"""
@@ -180,8 +208,13 @@ async def create_learning_plan(skill_id: int, data: LearningPlanRequest, db: Asy
     if not skill:
         raise HTTPException(status_code=404, detail="技能不存在")
 
-    plan = await generate_learning_plan(skill.name, data.required_level, data.prior_understanding)
+    # 结论 8：图谱先生成，学习计划据图切分。没图就没法切 —— 不能退回「凭空排计划」那套
     import json
+    if not skill.knowledge_graph:
+        raise HTTPException(status_code=409, detail="请先生成知识图谱，学习计划由图谱切分得出")
+    graph = json.loads(skill.knowledge_graph)["nodes"]
+
+    plan = await generate_learning_plan(skill.name, data.required_level, data.prior_understanding, graph)
     plan["prior_understanding"] = data.prior_understanding  # 随计划落库，供模拟用户评审读取学习者背景
     text = json.dumps(plan, ensure_ascii=False)
     # 降级内容（无 key / 服务不可用）不落库：失败态不该污染持久化，重进页面不再见到死计划

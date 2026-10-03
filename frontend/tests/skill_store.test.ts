@@ -30,12 +30,12 @@ describe("TC-STORE-SKILL-001: SkillStore add skill", () => {
 describe("TC-STORE-SKILL-002: SkillStore update proficiency", () => {
   beforeEach(() => {
     useSkillStore.setState({
-      skills: [{ id: 1, name: "React", category: "前端", proficiency: 50, source: "", notes: "", learned_at: null, created_at: "" }],
+      skills: [{ id: 1, name: "React", category: "前端", proficiency: 50, source: "", notes: "", learned_at: null, created_at: "", has_graph: false }],
     });
   });
 
   it("should update proficiency", async () => {
-    const updated = { id: 1, name: "React", category: "前端", proficiency: 90, source: "", notes: "", learned_at: null, created_at: "" };
+    const updated = { id: 1, name: "React", category: "前端", proficiency: 90, source: "", notes: "", learned_at: null, created_at: "", has_graph: false };
     vi.mocked(api.put).mockResolvedValue(updated);
 
     await useSkillStore.getState().updateSkill(1, { proficiency: 90 });

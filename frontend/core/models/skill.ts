@@ -8,6 +8,22 @@ export interface Skill {
   notes: string;
   learned_at: string | null;
   created_at: string;
+  /** 是否已生成知识图谱。树本身要单独取（getGraph），卡片只需要这个布尔 */
+  has_graph: boolean;
+}
+
+/** 知识图谱节点。id 由服务端分配（1 / 1.2 / 1.2.3），是分数落点和笔记归属的锚 */
+export interface GraphNode {
+  id: string;
+  title: string;
+  children: GraphNode[];
+}
+
+export interface KnowledgeGraph {
+  nodes: GraphNode[];
+  /** true = 树的容量约束两次都没过。仍可用，但父节点累加会偏，要显式提示 */
+  degraded: boolean;
+  issues: string[];
 }
 
 export interface SkillCreate {
