@@ -35,6 +35,12 @@ class TestSkills:
         assert len(resp.json()) == 1
         assert resp.json()[0]["name"] == "React"
 
+    async def test_create_skill_without_proficiency_is_null(self, client):
+        """TC-SKILL-001b: 不带 proficiency 创建 → NULL（未表态），不是 0"""
+        resp = await client.post("/api/skills", json={"name": "harness", "notes": "压测框架"})
+        assert resp.status_code == 201
+        assert resp.json()["proficiency"] is None
+
     async def test_update_skill(self, client):
         """TC-SKILL-003: PUT /api/skills/:id 更新技能"""
         created = await client.post("/api/skills", json={"name": "React", "proficiency": 50})

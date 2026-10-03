@@ -8,7 +8,8 @@ class Skill(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     category = Column(String(100), default="")  # 前端/后端/数据库/工具/其他
-    proficiency = Column(Integer, default=0)  # 0-100
+    # 0-100 自评；NULL = 用户尚未表态（「未验证」），不要用 0 冒充
+    proficiency = Column(Integer, nullable=True)
     source = Column(String(200), default="")  # 来源：JD分析/手动添加
     notes = Column(Text, default="")
     learned_at = Column(DateTime, nullable=True)

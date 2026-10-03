@@ -6,7 +6,8 @@ from typing import Optional
 class SkillCreate(BaseModel):
     name: str
     category: str = ""
-    proficiency: int = 0
+    # 不预填 0：「没表态」和「自评 0 分」是两件事
+    proficiency: Optional[int] = None
     source: str = ""
     notes: str = ""
 
@@ -23,7 +24,7 @@ class SkillResponse(BaseModel):
     id: int
     name: str
     category: str
-    proficiency: int
+    proficiency: Optional[int] = None
     source: str
     notes: str
     learned_at: Optional[datetime] = None
@@ -82,7 +83,3 @@ class InterviewQuestionUpdate(BaseModel):
 class StepScoreItem(BaseModel):
     step: int
     score: float
-
-
-class ProficiencyFromStepsRequest(BaseModel):
-    step_scores: list[StepScoreItem]

@@ -7,6 +7,8 @@ import LearningPanel from "@web/components/LearningPanel";
 import { GridIcon } from "@web/components/EmptyIcons";
 import { api } from "@core/api/client";
 import type { Skill } from "@core/models/skill";
+import type { Question } from "@core/models/quiz";
+import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { calculateAllStepScores, calculateStepScore, loadCornellFromStorage } from "@core/services/scoring";
 import AIErrorBox from "@web/components/AIErrorBox";
 import LoadingDots from "@web/components/LoadingDots";
@@ -21,7 +23,7 @@ function EditSkillModal({
 }: {
   skill: Skill;
   onClose: () => void;
-  onSave: (data: { name: string; category: string; proficiency: number; notes: string }) => Promise<void>;
+  onSave: (data: { name: string; category: string; proficiency: number | null; notes: string }) => Promise<void>;
   categories: string[];
 }) {
   const [name, setName] = useState(skill.name);
@@ -45,10 +47,10 @@ function EditSkillModal({
             </select>
           </div>
           <div>
-            <label className="text-xs text-muted block mb-1">熟练度</label>
+            <label className="text-xs text-muted block mb-1">自评熟练度</label>
             <div className="flex items-center gap-3">
-              <input type="range" min={0} max={100} value={proficiency} onChange={(e) => setProficiency(Number(e.target.value))} className="flex-1" />
-              <span className="text-xs text-muted w-8 text-right">{proficiency}%</span>
+              <input type="range" min={0} max={100} value={proficiency ?? 0} onChange={(e) => setProficiency(Number(e.target.value))} className="flex-1" />
+              <span className="text-xs text-muted w-12 text-right">{proficiency === null ? "未验证" : `${proficiency}%`}</span>
             </div>
           </div>
           <div>
@@ -72,7 +74,8 @@ export default function SkillLibrary() {
   const [showForm, setShowForm] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [expandedSkill, setExpandedSkill] = useState<number | null>(null);
-  const [formData, setFormData] = useState({ name: "", category: "前端", proficiency: 50, notes: "" });
+  // 新建时不带 proficiency：没自评过就存 NULL，用一个预填的 50 冒充自评是假数据
+  const [formData, setFormData] = useState({ name: "", category: "前端", notes: "" });
   const [newResource, setNewResource] = useState({ title: "", url: "", type: "article" });
   const [editingResourceId, setEditingResourceId] = useState<number | null>(null);
   const [editResourceData, setEditResourceData] = useState({ title: "", url: "", type: "", completed: false });
@@ -80,7 +83,7 @@ export default function SkillLibrary() {
   const [editingQuestionId, setEditingQuestionId] = useState<number | null>(null);
   const [editQuestionData, setEditQuestionData] = useState({ question: "", answer: "", difficulty: "medium" });
   const [deleteSkillTarget, setDeleteSkillTarget] = useState<number | null>(null);
-  const [quizQs, setQuizQs] = useState<Record<number, { id: number; type: string; question_text: string }[]>>({});
+  const [quizQs, setQuizQs] = useState<Record<number, Question[]>>({});
   const [deleteResourceTarget, setDeleteResourceTarget] = useState<{ skillId: number; id: number; title: string } | null>(null);
   const [deleteQuestionTarget, setDeleteQuestionTarget] = useState<{ skillId: number; id: number; question: string } | null>(null);
   // 学习计划的现状描述 / 掌握程度按技能隔离，避免跨技能残留
@@ -118,13 +121,15 @@ export default function SkillLibrary() {
   const allCategories = ["全部", ...new Set(skills.map((s) => s.category).filter(Boolean))];
 
   const handleAdd = async () => {
-    if (!formData.name.trim()) return;
+    // 备注必填：它是出题时唯一的技能语境（见 backend _skill_context）。
+    // 空的备注会让「harness」这种歧义名退化成裸名字，AI 只能瞎猜。
+    if (!formData.name.trim() || !formData.notes.trim()) return;
     await addSkill(formData);
-    setFormData({ name: "", category: "前端", proficiency: 50, notes: "" });
+    setFormData({ name: "", category: "前端", notes: "" });
     setShowForm(false);
   };
 
-  const handleEdit = async (skill: Skill, data: { name: string; category: string; proficiency: number; notes: string }) => {
+  const handleEdit = async (skill: Skill, data: { name: string; category: string; proficiency: number | null; notes: string }) => {
     await updateSkill(skill.id, data);
     setEditingSkill(null);
   };
@@ -249,14 +254,15 @@ export default function SkillLibrary() {
     // Fetch related quiz questions
     try {
       const { api } = await import("@core/api/client");
-      const qs = await api.get<{ id: number; type: string; question_text: string }[]>(`/api/questions?skill_id=${skillId}`);
+      const qs = await api.get<Question[]>(`/api/questions?skill_id=${skillId}`);
       setQuizQs((prev) => ({ ...prev, [skillId]: qs }));
     } catch {
       // ignore
     }
   };
 
-  const getProficiencyColor = (value: number) => {
+  const getProficiencyColor = (value: number | null) => {
+    if (value === null) return "bg-surface text-muted";
     if (value >= 80) return "bg-green text-green";
     if (value >= 60) return "bg-blue text-blue";
     if (value >= 40) return "bg-amber text-amber";
@@ -294,34 +300,36 @@ export default function SkillLibrary() {
 
   /* ── Isolated slider component to prevent table re-render on drag ── */
   function ProficiencySlider({ skill: sk }: { skill: Skill }) {
-    const [val, setVal] = useState(sk.proficiency);
+    const [val, setVal] = useState<number | null>(sk.proficiency);
     useEffect(() => setVal(sk.proficiency), [sk.proficiency]);
+
+    const commit = async () => {
+      if (val === null) return; // 没拖过就不写，别把「未验证」变成一个数字
+      try {
+        await api.put(`/api/skills/${sk.id}`, { proficiency: val });
+        const { skills } = useSkillStore.getState();
+        useSkillStore.setState({ skills: skills.map((s) => s.id === sk.id ? { ...s, proficiency: val } : s) });
+      } catch {}
+    };
 
     return (
       <div className="flex items-center gap-3 max-w-[180px]" onClick={(e) => e.stopPropagation()}>
         <input
           type="range" min={0} max={100}
-          value={val}
+          value={val ?? 0}
+          title={val === null ? "拖动即表示自评（未经验证，只是你的预测）" : "自评熟练度（未经验证）"}
           onChange={(e) => setVal(Number(e.target.value))}
-          onMouseUp={async () => {
-            try {
-              await api.put(`/api/skills/${sk.id}`, { proficiency: val });
-              const { skills } = useSkillStore.getState();
-              useSkillStore.setState({ skills: skills.map((s) => s.id === sk.id ? { ...s, proficiency: val } : s) });
-            } catch {}
-          }}
-          onTouchEnd={async () => {
-            try {
-              await api.put(`/api/skills/${sk.id}`, { proficiency: val });
-              const { skills } = useSkillStore.getState();
-              useSkillStore.setState({ skills: skills.map((s) => s.id === sk.id ? { ...s, proficiency: val } : s) });
-            } catch {}
-          }}
+          onMouseUp={commit}
+          onTouchEnd={commit}
           className="flex-1"
         />
-        <span className={`text-xs font-medium ${getProficiencyColor(val).split(" ")[1]}`}>
-          <AnimatedProficiency value={val} />%
-        </span>
+        {val === null
+          ? <span className="text-xs font-medium text-muted whitespace-nowrap">未验证</span>
+          : (
+            <span className={`text-xs font-medium ${getProficiencyColor(val).split(" ")[1]}`}>
+              <AnimatedProficiency value={val} />%
+            </span>
+          )}
       </div>
     );
   }
@@ -336,6 +344,12 @@ export default function SkillLibrary() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => navigate("/feynman")}
+            className="bg-transparent text-ink border border-hairline rounded-full px-5 py-2 font-medium text-sm hover:bg-surface transition-all active:scale-95"
+          >
+            费曼复习
+          </button>
+          <button
             onClick={() => setShowForm(!showForm)}
             className="bg-blue text-white rounded-full px-5 py-2 font-semibold text-sm hover:bg-blue/90 transition-all active:scale-95"
           >
@@ -348,7 +362,7 @@ export default function SkillLibrary() {
       {showForm && (
         <div className="bg-canvas rounded-xl border border-hairline p-5 mb-6 transition-all duration-200 hover:border-blue/20" style={entrance(mounted, 0.05)}>
           <h3 className="font-semibold text-sm text-ink mb-4">添加技能</h3>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <input
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -364,24 +378,18 @@ export default function SkillLibrary() {
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
-            <div className="flex items-center gap-2">
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={formData.proficiency}
-                onChange={(e) => setFormData({ ...formData, proficiency: Number(e.target.value) })}
-                className="flex-1"
-              />
-              <span className="text-xs text-muted w-8 text-right">{formData.proficiency}%</span>
-            </div>
             <input
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              placeholder="备注（选填）"
+              placeholder="备注（必填 · 出题依据）"
+              title="写清这个技能具体指什么。出题时只有这段文字会作为技能语境传给 AI，歧义名（如 harness）尤其要写。"
               className="border border-hairline rounded-lg px-3 py-2 text-sm outline-none focus:border-blue transition-colors"
             />
-            <button onClick={handleAdd} className="bg-ink text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-ink/90 transition-colors">
+            <button
+              onClick={handleAdd}
+              disabled={!formData.name.trim() || !formData.notes.trim()}
+              className="bg-ink text-white rounded-full px-4 py-2 text-sm font-medium hover:bg-ink/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-ink"
+            >
               确认添加
             </button>
           </div>
@@ -444,7 +452,7 @@ export default function SkillLibrary() {
               <tr className="bg-surface text-xs text-muted uppercase tracking-wider">
                 <th className="text-left px-4 py-3 font-medium">技能名称</th>
                 <th className="text-left px-4 py-3 font-medium">分类</th>
-                <th className="text-left px-4 py-3 font-medium">熟练度</th>
+                <th className="text-left px-4 py-3 font-medium" title="这是你的自评，不是验证过的分数。没拖过滑块就是「未验证」">自评熟练度</th>
                 <th className="text-left px-4 py-3 font-medium">来源</th>
                 <th className="text-left px-4 py-3 font-medium">备注</th>
                 <th className="text-right px-4 py-3 font-medium">操作</th>
@@ -733,12 +741,27 @@ export default function SkillLibrary() {
                             <div className="md:col-span-2">
                               <div className="flex items-center justify-between mb-3">
                                 <h4 className="text-sm font-semibold text-ink">AI 生成题目</h4>
-                                <button
-                                  onClick={() => navigate("/quiz")}
-                                  className="text-xs text-blue hover:text-blue/80 font-medium"
-                                >
-                                  去刷题 →
-                                </button>
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    onClick={() =>
+                                      exportQuestionsToPDF({
+                                        title: `${skill.name} · 复习题`,
+                                        subtitle: `共 ${quizQs[skill.id].length} 题`,
+                                        questions: quizQs[skill.id],
+                                        showAnswers: true,
+                                      })
+                                    }
+                                    className="text-xs text-blue hover:text-blue/80 font-medium"
+                                  >
+                                    导出 PDF
+                                  </button>
+                                  <button
+                                    onClick={() => navigate("/quiz")}
+                                    className="text-xs text-blue hover:text-blue/80 font-medium"
+                                  >
+                                    去刷题 →
+                                  </button>
+                                </div>
                               </div>
                               <div className="space-y-2">
                                 {quizQs[skill.id].slice(0, 5).map((q) => (
@@ -1023,33 +1046,17 @@ export default function SkillLibrary() {
           step={learningPanel.step}
           requiredLevel={learningPanel.requiredLevel}
           stepType={learningPanel.step.type}
-          onClose={async () => {
-            // Auto-calculate step scores from Cornell notes and push to backend
+          onClose={() => {
+            // Cornell 笔记完成度只在前端本地算分展示，不落库。
+            // 停掉的 /proficiency-from-steps 曾把笔记字数启发式当成自评写进 skill.proficiency。
             const sid = learningPanel.skillId;
-            try {
-              const plan = useSkillStore.getState().learningPlan;
-              if (plan && plan.steps.length > 0) {
-                const result = calculateAllStepScores(sid, plan.steps);
-                // 手动标记完成的步骤覆盖为满分
-                const effectiveScores = result.stepScores.map((s) => ({
-                  step: s.step,
-                  score: getStepScore(sid, s.step),
-                }));
-                // Update local step scores
-                const scoresMap: Record<number, number> = {};
-                effectiveScores.forEach((s) => { scoresMap[s.step] = s.score; });
-                setStepScores((prev) => ({ ...prev, [sid]: scoresMap }));
-                // Push to backend and update local store only (no full refresh)
-                const updated = await api.post<Skill>(`/api/skills/${sid}/proficiency-from-steps`, {
-                  step_scores: effectiveScores,
-                });
-                const { skills } = useSkillStore.getState();
-                useSkillStore.setState({
-                  skills: skills.map((s) => (s.id === sid ? { ...s, proficiency: updated.proficiency } : s)),
-                });
-              }
-            } catch {
-              // ignore
+            const plan = useSkillStore.getState().learningPlan;
+            if (plan && plan.steps.length > 0) {
+              const result = calculateAllStepScores(sid, plan.steps);
+              const scoresMap: Record<number, number> = {};
+              // 手动标记完成的步骤覆盖为满分
+              result.stepScores.forEach((s) => { scoresMap[s.step] = getStepScore(sid, s.step); });
+              setStepScores((prev) => ({ ...prev, [sid]: scoresMap }));
             }
             // 只关动画不卸载：后台生成中的讲解/知识点请求继续，重开面板时加载状态保留
             setLearningPanel((p) => (p ? { ...p, open: false } : p));

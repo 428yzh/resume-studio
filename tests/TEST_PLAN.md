@@ -62,9 +62,12 @@ tests/
 - TC-JD-004: POST /api/jd/analyze-image 未上传文件返回 422
 - TC-JD-005: POST /api/jd/analyze-image 非图片文件返回 400
 - TC-JD-006: POST /api/jd/analyze-image 空白图片 OCR 失败返回 400
+- TC-JD-007: PUT /api/jd/analyses/:id 重命名 title 真正落库（回归：title 由 analysis_result 派生，非独立列）
+- TC-JD-008: PUT /api/jd/analyses/:id 不存在的记录返回 404
 
 ### TC-SKILL 系列
 - TC-SKILL-001: POST /api/skills 创建技能
+- TC-SKILL-001b: 不带 proficiency 创建 → NULL（未表态），不是 0
 - TC-SKILL-002: GET /api/skills 列出技能
 - TC-SKILL-003: PUT /api/skills/:id 更新技能
 - TC-SKILL-004: DELETE /api/skills/:id 删除技能

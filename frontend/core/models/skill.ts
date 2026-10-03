@@ -2,7 +2,8 @@ export interface Skill {
   id: number;
   name: string;
   category: string;
-  proficiency: number;
+  /** 0-100 自评；null = 尚未表态（「未验证」） */
+  proficiency: number | null;
   source: string;
   notes: string;
   learned_at: string | null;
@@ -12,7 +13,7 @@ export interface Skill {
 export interface SkillCreate {
   name: string;
   category?: string;
-  proficiency?: number;
+  proficiency?: number | null;
   source?: string;
   notes?: string;
 }

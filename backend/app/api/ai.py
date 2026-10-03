@@ -84,7 +84,8 @@ async def explain_topic_endpoint(data: ExplainTopicRequest, db: AsyncSession = D
             result = await db.execute(select(Skill).where(Skill.id == data.skill_id))
             skill = result.scalar_one_or_none()
             if skill:
-                parts = [f"技能熟练度 {skill.proficiency}/100"]
+                # proficiency 为 NULL = 用户没自评过，不编一个数字冒充
+                parts = [] if skill.proficiency is None else [f"技能熟练度 {skill.proficiency}/100"]
                 if skill.learning_plan:
                     try:
                         prior = json.loads(skill.learning_plan).get("prior_understanding", "")

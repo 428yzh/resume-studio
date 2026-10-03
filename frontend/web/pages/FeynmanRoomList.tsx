@@ -117,7 +117,7 @@ export default function FeynmanRoomList() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-ink truncate">{s.name}</div>
-                  <div className="text-[11px] text-muted">熟练度 {s.proficiency}</div>
+                  <div className="text-[11px] text-muted">{s.proficiency === null ? "熟练度未验证" : `自评熟练度 ${s.proficiency}`}</div>
                 </div>
               </button>
             );

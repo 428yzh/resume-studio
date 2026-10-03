@@ -9,7 +9,6 @@ from app.schemas.skill import (
     SkillCreate, SkillUpdate, SkillResponse,
     LearningResourceCreate, LearningResourceUpdate, LearningResourceResponse,
     InterviewQuestionCreate, InterviewQuestionUpdate, InterviewQuestionResponse,
-    ProficiencyFromStepsRequest,
 )
 from app.services.ai_service import generate_learning_plan
 
@@ -192,24 +191,9 @@ async def create_learning_plan(skill_id: int, data: LearningPlanRequest, db: Asy
     return plan
 
 
-@router.post("/{skill_id}/proficiency-from-steps", response_model=SkillResponse)
-async def calculate_proficiency_from_steps(skill_id: int, data: ProficiencyFromStepsRequest, db: AsyncSession = Depends(get_db)):
-    """根据学习步骤的 Cornell 笔记完成度自动更新技能掌握度"""
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
-    if not skill:
-        raise HTTPException(status_code=404, detail="技能不存在")
-
-    if not data.step_scores:
-        return skill
-
-    overall = sum(s.score for s in data.step_scores) / len(data.step_scores)
-    overall = max(0, min(100, round(overall)))
-
-    skill.proficiency = overall
-    await db.commit()
-    await db.refresh(skill)
-    return skill
+# 已删除 POST /{skill_id}/proficiency-from-steps：
+# 它把「康奈尔笔记字数启发式」当成自评写进 skill.proficiency，是假数据来源。
+# 笔记完成度只在前端本地算分展示，不落库（见 design/2026-10-03 技能模块设计纪要 ①）。
 
 
 @router.post("/{skill_id}/import", response_model=SkillResponse)
