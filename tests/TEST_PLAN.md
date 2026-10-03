@@ -72,6 +72,28 @@ tests/
 - TC-SKILL-003: PUT /api/skills/:id 更新技能
 - TC-SKILL-004: DELETE /api/skills/:id 删除技能
 
+### TC-GRAPH 系列（知识图谱，test_knowledge_graph.py）
+- TC-GRAPH-001: 合格树通过校验（4 顶层 × 4 子 = 20 节点）
+- TC-GRAPH-002: 顶层节点数越界（<4 或 >6）被拦
+- TC-GRAPH-003: 子节点数越界（每节点 1 个）被拦
+- TC-GRAPH-004: **超过 3 层被拦**（父节点累加会算错，结论 13/14）
+- TC-GRAPH-005: 每层合法但总量超标（124 节点）被拦
+- TC-GRAPH-006: children 写成 null/字符串时计数不炸
+- TC-GRAPH-007: id 按位分配（1 / 1.2 / 1.2.3），分数落点要稳
+- TC-GRAPH-008: 三层 id 嵌套
+- TC-GRAPH-009: title 去空格 + 丢弃非 dict 的 children
+- TC-GRAPH-010: 端点往返 —— 未生成返回 null / 生成后落库可读 / 中文标题原样 / 不存在 404
+- TC-GRAPH-011: 空图谱不落库（失败态不污染持久化）
+
+### TC-PLAN 系列（学习计划 = 图谱切分，结论 8/9）
+- TC-PLAN-001: 覆盖完整通过 —— 一一对应 / 合并成更少单元（了解档）都合法
+- TC-PLAN-002: **漏掉顶层节点被拦**（那块知识永远不会被安排学）
+- TC-PLAN-003: 多个单元重复覆盖同一节点被拦
+- TC-PLAN-004: 引用子节点 id（"1.2"）被拦 —— 会让分数落点错位
+- TC-PLAN-005: 空 node_ids / 非 dict 的 step 不炸
+- TC-PLAN-006: `_render_graph_for_prompt` 带 id 缩进渲染（切分依据是 id，id 必须进 prompt）
+- TC-PLAN-007: 端点 —— 无图谱 409；有图谱时把树传给切分函数并落库
+
 ### TC-JOB 系列（岗位推荐）
 - TC-JOB-001: GET /api/jobs 无数据时返回空列表
 - TC-JOB-002: POST /api/jobs/refresh 搜索失败时保留旧岗位

@@ -39,7 +39,7 @@
 | PDF | @react-pdf/renderer v4 | A4 简历 + 试题导出。**必须走 `NotoSansSC` 字体**，见下方「PDF 中文字体」 |
 | 状态管理 | Zustand v5 | 零 DOM 依赖 |
 | 数据库 | SQLite + aiosqlite | 异步，无需额外部署 |
-| 测试 | pytest + httpx + vitest + Playwright | 后端 87 / 前端 51 / E2E 8 |
+| 测试 | pytest + httpx + vitest + Playwright | 后端 105 / 前端 51 / E2E 8 |
 
 ## 架构
 
@@ -204,7 +204,7 @@ frontend/
 │   ├── pages/                ← 13 个
 │   │   ├── ResumeList.tsx / ResumeEditor.tsx (4 tab)
 │   │   ├── JDAnalysis.tsx    ← 文本 / 图片 OCR 双输入
-│   │   ├── SkillLibrary.tsx  ← 表格 + 分类 + 资源/面试题/关联题目
+│   │   ├── SkillLibrary.tsx  ← 技能卡片网格 + 分类 + 展开详情（资源/面试题/关联题目）
 │   │   ├── MockInterviewList.tsx / MockInterview.tsx
 │   │   ├── QuizList.tsx / QuizSession.tsx / QuizExam.tsx
 │   │   ├── QuizRecords.tsx / QuizRecordDetail.tsx
@@ -271,8 +271,12 @@ GET    /api/skills                      → 列表 (?category=)
 PUT    /api/skills/:id                  → 更新
 DELETE /api/skills/:id                  → 删除
 POST   /api/skills/:id/import           → 批量导入技能
+GET    /api/skills/:id/graph            → 读取知识图谱（未生成返回 null）
+POST   /api/skills/:id/graph            → AI 生成并保存知识图谱（技能级，生成一次）
 GET    /api/skills/:id/learning-plan    → 读取学习计划
-POST   /api/skills/:id/learning-plan    → 生成学习计划（走多 Agent 评审）
+POST   /api/skills/:id/learning-plan    → 生成学习计划（把图谱切分成学习单元；
+                                            无图谱 409，走多 Agent 评审）
+                                            新增 GET/POST /api/skills/:id/graph → 知识图谱
                                             （原 /proficiency-from-steps 已删除，见「自评 NULL 化」）
 GET    /api/skills/:id/resources        → 学习资源列表
 POST   /api/skills/:id/resources        → 添加资源
@@ -351,7 +355,7 @@ PUT    /api/feynman/topics/:id/problems/:pid    → 标记解决 / 重开 {statu
 | **resumes** | id, title, template_id, sections(JSON), target_company, target_position, created_at, updated_at | 简历主体 |
 | **templates** | id, name, description, structure(JSON), is_default, created_at | 3 套种子模板 |
 | **jd_analyses** | id, company, position, jd_text, tech_stack(JSON), analysis_result(JSON), resume_id(FK), created_at | JD 分析记录 |
-| **skills** | id, name, category, proficiency(0-100, **nullable; NULL=未验证**), source, notes, learned_at, created_at, learning_plan | 技能库 |
+| **skills** | id, name, category, proficiency(0-100, **nullable; NULL=未验证**), source, notes, learned_at, created_at, learning_plan, knowledge_graph(JSON, **nullable; NULL=未生成图谱**) | 技能库。`has_graph` 是模型上的 property，只暴露布尔不给树。**`learning_plan` 由图谱切分得出**（steps 带 `node_ids` 指向顶层节点，每节点恰好被覆盖一次），无图谱时 `POST /learning-plan` 返回 409 |
 | **learning_resources** | id, skill_id(FK), title, url, type, completed | 学习资源 |
 | **interview_questions** | id, skill_id(FK), question, answer, difficulty | 面试题 |
 | **jobs** | id, title, company, city, salary, experience, education, jd, url, created_at | 岗位推荐缓存（DeepSeek 联网搜索） |
@@ -374,6 +378,7 @@ PUT    /api/feynman/topics/:id/problems/:pid    → 标记解决 / 重开 {statu
 6. **SSE 流式体验** — AI 润色使用 Server-Sent Events 逐 token 渲染，支持 AbortController 取消
 7. **PDF 导入 → AI 解析** — 上传 PDF 后 AI 自动提取结构化 sections，支持旧格式自动迁移
 8. **多 Agent 评审** — 教学生成先经资深讲师（内容质量）+ 模拟用户（适配度）独立评审，评审只出 JSON 反馈、生成始终由原生成器执行；反馈增量注入（上下文不丢），棘轮回滚保证只变好不变差，失败放行不阻断主流程
+9. **代码能判的不问 AI** — 图谱的树容量约束、学习计划对图谱的覆盖完整度都是**代码可判定**的，用 for 循环校验 + 带着问题重试一次，不烧评审 agent 去查（评审 agent 留给判不了的：讲解写得好不好）
 
 ## PDF 中文字体（踩过的坑，别再踩）
 
@@ -476,11 +481,11 @@ require("fontkit").openSync("frontend/public/fonts/NotoSansSC-Regular.woff").has
 
 ## 测试体系
 
-详见 `tests/TEST_PLAN.md`。当前 **146 tests**（后端 87 + 前端 51 + E2E 8）。
+详见 `tests/TEST_PLAN.md`。当前 **164 tests**（后端 105 + 前端 51 + E2E 8）。
 
 **覆盖盲区（已知，待补）**：
 - 后端 `quiz.py` 全部 8 个 endpoint、`mock_interview.py` 全部 6 个 endpoint **零测试**
-- 后端 `ai.py` 的 polish / polish/stream / explain-topic / cornell-prompts、`resumes` 的 import-pdf、`skills` 的 learning-plan **零测试**
+- 后端 `ai.py` 的 polish / polish/stream / explain-topic / cornell-prompts、`resumes` 的 import-pdf **零测试**（`skills` 的 learning-plan 已由 TC-PLAN 覆盖到端点层）
 - 前端 `quizStore` / `interviewStore` **零单测**（tests/ 只覆盖 resume/skill/job/feynman 四个 store）
 - E2E `navigation.spec.ts` 名为 "all pages"，实际只点了 3 个导航项
 
@@ -541,7 +546,7 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 
 | 模块 | 进度 | 测试 |
 |------|------|------|
-| **后端 API** | 100% | 87/87 ✅ |
+| **后端 API** | 100% | 105/105 ✅ |
 | **前端 core 层** | 100% | 51/51 ✅ |
 | **前端 UI 层** | 100% | — |
 | **E2E 测试** | 部分 | 8/8 ✅（仅覆盖 3/6 导航） |
@@ -683,7 +688,7 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 - `frontend/src/` — App.tsx (路由, 17 条) / main.tsx (入口)
 
 **测试 (13 个文件)**
-- `backend/tests/` — 11 个文件 (conftest + 10 个测试模块：health/resumes/templates/skills/jd_analysis/jobs/feynman/feynman_problems/review_pipeline/ai_audit)
+- `backend/tests/` — 12 个文件 (conftest + 11 个测试模块：health/resumes/templates/skills/jd_analysis/jobs/feynman/feynman_problems/review_pipeline/ai_audit/knowledge_graph + TC-PLAN 系列)
 - `frontend/tests/` — 8 个 vitest 测试文件 (api_client/models/resume_service/resume_store/skill_store/job_store/feynman_store/highlights)
 - `frontend/e2e/` — 4 个 Playwright 规范 (8 个 test)
 
