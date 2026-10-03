@@ -37,6 +37,33 @@ class TestJDAnalysis:
         assert resp.status_code == 200
         assert resp.json()["jd_text"] == "测试 JD"
 
+    async def test_update_analysis_title(self, client):
+        """TC-JD-007: PUT /api/jd/analyses/:id 重命名 title 需真正落库
+
+        title 不是 jd_analyses 的列，它从 analysis_result["suggested_title"] 派生，
+        所以重命名必须写回 JSON 字段，否则静默失效。
+        """
+        created = await client.post("/api/jd/analyze", json={"jd_text": "测试 JD"})
+        analysis_id = created.json()["id"]
+
+        resp = await client.put(
+            f"/api/jd/analyses/{analysis_id}",
+            json={"title": "我的自定义标题", "company": "改后的公司", "position": "改后的岗位"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "我的自定义标题"
+
+        # 重新拉取，确认不是只在响应里改了
+        detail = await client.get(f"/api/jd/analyses/{analysis_id}")
+        assert detail.json()["title"] == "我的自定义标题"
+        assert detail.json()["company"] == "改后的公司"
+        assert detail.json()["position"] == "改后的岗位"
+
+    async def test_update_analysis_missing(self, client):
+        """TC-JD-008: PUT /api/jd/analyses/:id 不存在的记录返回 404"""
+        resp = await client.put("/api/jd/analyses/99999", json={"title": "x"})
+        assert resp.status_code == 404
+
     async def test_analyze_image_no_file(self, client):
         """TC-JD-004: POST /api/jd/analyze-image 未上传文件返回 422"""
         resp = await client.post("/api/jd/analyze-image")

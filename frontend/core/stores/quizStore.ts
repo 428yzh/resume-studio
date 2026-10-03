@@ -78,6 +78,9 @@ export const useQuizStore = create<QuizState>((set, get) => ({
     set({ submitting: true, error: null });
     try {
       await api.post(`/api/quiz/sessions/${sessionId}/submit`, { answers });
+      // 重新拉取：判分结果（is_correct / ai_score / ai_feedback）只在服务端生成，
+      // 不刷新的话交卷后结果页拿到的是交卷前的旧 answers（空数组）。
+      await get().fetchSession(sessionId);
       set({ submitting: false });
     } catch (e) {
       set({ error: (e as Error).message, submitting: false });

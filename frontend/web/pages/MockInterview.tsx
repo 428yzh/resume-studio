@@ -228,7 +228,7 @@ export default function MockInterview() {
             返回列表
           </button>
           <button
-            onClick={() => navigate("/mock-interview/new")}
+            onClick={() => navigate("/mock-interview")}
             className="bg-blue text-white rounded-full px-5 py-2 text-sm font-semibold transition-all duration-200 hover:bg-blue/90 active:scale-95"
           >
             再来一次

@@ -136,7 +136,17 @@ async def update_analysis(analysis_id: int, data: JDAnalysisUpdate, db: AsyncSes
         raise HTTPException(status_code=404, detail="分析记录不存在")
 
     if data.title:
-        record.title = data.title
+        # title 没有独立列：_record_to_response 从 analysis_result["suggested_title"] 派生，
+        # 所以重命名必须写回 JSON 字段，直接赋 record.title 会静默失效。
+        analysis = (
+            json.loads(record.analysis_result)
+            if isinstance(record.analysis_result, str)
+            else record.analysis_result
+        )
+        if not isinstance(analysis, dict):
+            analysis = {}
+        analysis["suggested_title"] = data.title
+        record.analysis_result = json.dumps(analysis, ensure_ascii=False)
     if data.company:
         record.company = data.company
     if data.position:
@@ -148,11 +158,6 @@ async def update_analysis(analysis_id: int, data: JDAnalysisUpdate, db: AsyncSes
 
 
 # ═══ BOSS直聘 集成端点 ═══
-
-class _FromBossResponse(JDAnalysisResponse):
-    """复用 JDAnalysisResponse 结构"""
-    pass
-
 
 @router.post("/from-boss", response_model=JDAnalysisResponse)
 async def analyze_from_boss(data: JDAnalyzeFromBossRequest, db: AsyncSession = Depends(get_db)):

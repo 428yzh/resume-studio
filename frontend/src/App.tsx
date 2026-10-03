@@ -21,11 +21,9 @@ export default function App() {
         <Route path="/" element={<Navigate to="/resumes" replace />} />
         <Route path="/resumes" element={<ResumeList />} />
         <Route path="/resumes/:id" element={<ResumeEditor />} />
-        <Route path="/resumes/new" element={<ResumeEditor />} />
         <Route path="/jd" element={<JDAnalysis />} />
         <Route path="/skills" element={<SkillLibrary />} />
         <Route path="/mock-interview" element={<MockInterviewList />} />
-        <Route path="/mock-interview/new" element={<MockInterview />} />
         <Route path="/mock-interview/:id" element={<MockInterview />} />
         <Route path="/quiz" element={<QuizList />} />
         <Route path="/quiz/session/:id" element={<QuizSession />} />
