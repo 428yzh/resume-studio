@@ -20,6 +20,27 @@ class SkillUpdate(BaseModel):
     source: Optional[str] = None
 
 
+class GraphLowest(BaseModel):
+    """最低的那个顶层块（分数地图的最高优先级线索：哪块虚）"""
+    id: str
+    title: str
+    score: int
+
+
+class GraphSummary(BaseModel):
+    """卡片正面三件套（设计 4.1）：覆盖率 × 状态 × 单元数。列表接口现算，不落库。
+
+    covered 只数**直接证据**（own>0）：父节点的分是子节点算出来的，
+    不证明父节点被测过。score 为 None = 一块都没测过（不是 0 分）。
+    """
+    score: Optional[int] = None
+    tested: int = 0
+    total: int = 0
+    depth: int = 0
+    units: int = 0
+    lowest: Optional[GraphLowest] = None
+
+
 class SkillResponse(BaseModel):
     id: int
     name: str
@@ -32,6 +53,8 @@ class SkillResponse(BaseModel):
     # 是否已生成知识图谱。只给布尔不给树：列表页要的是「生成过没有」，
     # 整棵树等展开时再单独 GET /graph
     has_graph: bool = False
+    # 卡片正面的图谱摘要；没图谱 → None（展开工作台时仍走 GET /graph 拿整棵树）
+    graph_summary: Optional[GraphSummary] = None
 
     model_config = {"from_attributes": True}
 

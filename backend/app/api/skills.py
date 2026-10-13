@@ -1,4 +1,6 @@
 import json
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, delete
@@ -16,6 +18,7 @@ from app.services.ai_service import generate_learning_plan, generate_knowledge_g
 from app.services.scoring import compute_scores
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("", response_model=SkillResponse, status_code=201)
@@ -33,7 +36,10 @@ async def list_skills(category: str = "", db: AsyncSession = Depends(get_db)):
     if category:
         query = query.where(Skill.category == category)
     result = await db.execute(query)
-    return result.scalars().all()
+    skills = result.scalars().all()
+    # 卡片正面要覆盖率（设计 4.1），展开才 GET /graph 来不及 —— 列表时现算附上。
+    # ponytail: 每行一次答题记录扫描；单用户几十个技能的量级够用，真慢了再批量取证据
+    return [await _resp_with_summary(s, db) for s in skills]
 
 
 @router.put("/{skill_id}", response_model=SkillResponse)
@@ -48,7 +54,7 @@ async def update_skill(skill_id: int, data: SkillUpdate, db: AsyncSession = Depe
 
     await db.commit()
     await db.refresh(skill)
-    return skill
+    return await _resp_with_summary(skill, db)
 
 
 @router.delete("/{skill_id}", status_code=204)
@@ -206,6 +212,71 @@ async def _node_evidence(db: AsyncSession, skill_id: int) -> dict[str, dict[str,
     return evidence
 
 
+async def _graph_summary(skill: Skill, db: AsyncSession) -> dict | None:
+    """卡片正面三件套（设计 4.1）：覆盖率 / 最低的一块 / 单元数。没图谱 → None。
+
+    跟 GET /graph 同一套算分（scoring.py），所以卡片和展开的数字永远一致。
+    """
+    if not skill.knowledge_graph:
+        return None
+    try:
+        nodes = json.loads(skill.knowledge_graph)["nodes"]
+    except Exception as e:
+        logger.warning(f"技能 {skill.id} 图谱解析失败，卡片摘要按未生成处理: {e}")
+        return None
+    scores = compute_scores(nodes, await _node_evidence(db, skill.id))
+
+    total = tested = 0
+
+    def count(ns: list) -> None:
+        nonlocal total, tested
+        for n in ns:
+            if not isinstance(n, dict):
+                continue
+            total += 1
+            if (scores.get(n.get("id")) or {}).get("own"):  # 只数直接证据，子树测了不算
+                tested += 1
+            count(n.get("children") or [])
+
+    count(nodes)
+
+    def depth_of(ns: list) -> int:
+        return 1 + max((depth_of(n.get("children") or []) for n in ns if isinstance(n, dict)), default=-1)
+
+    scored_tops = [
+        (n, scores[n["id"]]["score"])
+        for n in nodes
+        if isinstance(n, dict) and n.get("id") and (scores.get(n.get("id")) or {}).get("score") is not None
+    ]
+    lowest = min(scored_tops, key=lambda p: p[1]) if scored_tops else None
+
+    units = 0
+    if skill.learning_plan:
+        try:
+            units = len(json.loads(skill.learning_plan).get("steps") or [])
+        except Exception:
+            units = 0
+
+    return {
+        "score": round(sum(s for _, s in scored_tops) / len(scored_tops)) if scored_tops else None,
+        "tested": tested,
+        "total": total,
+        "depth": depth_of(nodes),
+        "units": units,
+        "lowest": {"id": lowest[0]["id"], "title": lowest[0].get("title", ""), "score": lowest[1]}
+        if lowest
+        else None,
+    }
+
+
+async def _resp_with_summary(skill: Skill, db: AsyncSession) -> dict:
+    """SkillResponse + 现算的 graph_summary。update 后前端整对象替换 store，摘要丢了卡片就瞎了"""
+    return {
+        **SkillResponse.model_validate(skill).model_dump(),
+        "graph_summary": await _graph_summary(skill, db),
+    }
+
+
 @router.get("/{skill_id}/graph")
 async def get_knowledge_graph(skill_id: int, db: AsyncSession = Depends(get_db)):
     """读取知识图谱 + 分数。未生成返回 null（卡片据此显示「未生成图谱」）。
@@ -305,4 +376,4 @@ async def import_skill_from_jd(skill_id: int, data: SkillUpdate, db: AsyncSessio
 
     await db.commit()
     await db.refresh(skill)
-    return skill
+    return await _resp_with_summary(skill, db)

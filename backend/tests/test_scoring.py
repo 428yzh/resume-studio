@@ -250,3 +250,53 @@ async def test_node_ids_without_graph_does_not_crash(client, monkeypatch):
     finally:
         await client.delete(f"/api/skills/{skill_id}")
 
+
+@pytest.mark.asyncio
+async def test_graph_summary_counts_direct_evidence_only(client, monkeypatch):
+    """TC-SCORE-012: 列表接口带卡片摘要（设计 4.1）
+
+    coverage 只数**直接证据**：父节点 1 的分是子节点 1.1 算出来的，不代表 1 被测过 ——
+    拿 answered（含子树）算覆盖率，「孩子测了」会被充成「父节点测了」，覆盖率虚高。
+    单元数来自学习计划；没图谱 → 摘要 None（卡片显示「未生成图谱」）。
+    """
+    skill_id = await _seed_skill(client, monkeypatch)
+
+    async def fake_plan(name, required_level, prior, graph):
+        return {"required_level": required_level, "steps": [
+            {"step": 1, "title": "单元1", "node_ids": ["1"]},
+            {"step": 2, "title": "单元2", "node_ids": ["2"]},
+        ]}
+
+    monkeypatch.setattr("app.api.skills.generate_learning_plan", fake_plan)
+    monkeypatch.setattr("app.api.quiz.generate_quiz_questions", _fake_questions("1.1", "1.1"))
+    try:
+        await client.post(f"/api/skills/{skill_id}/learning-plan", json={"required_level": "熟悉"})
+        qs = (await client.post("/api/questions/generate", json={
+            "mode": "practice", "skill_id": skill_id, "node_ids": ["1"],
+            "counts": {"single_choice": 2, "multi_choice": 0, "essay": 0},
+        })).json()
+        qids = [q["id"] for q in qs]
+        sid = (await client.post("/api/quiz/sessions", json={"mode": "practice", "question_ids": qids})).json()["id"]
+        await client.post(f"/api/quiz/sessions/{sid}/submit", json={"answers": {str(qids[0]): "A", str(qids[1]): "B"}})
+
+        me = next(s for s in (await client.get("/api/skills")).json() if s["id"] == skill_id)
+        g = me["graph_summary"]
+        assert g["tested"] == 1            # 只有 1.1 自己答过题；1 的分是它算上来的，不算
+        assert g["total"] == 4             # 1 / 1.1 / 1.2 / 2
+        assert g["depth"] == 2
+        assert g["score"] == 50
+        assert g["lowest"] == {"id": "1", "title": "循环驱动", "score": 50}
+        assert g["units"] == 2
+
+        # PUT 也要带摘要：store 拿响应整对象替换，摘要丢了卡片就瞎了
+        updated = (await client.put(f"/api/skills/{skill_id}", json={"notes": "改备注"})).json()
+        assert updated["graph_summary"]["tested"] == 1
+
+        plain = (await client.post("/api/skills", json={"name": "TC-SCORE 无图谱摘要"})).json()
+        try:
+            assert plain["graph_summary"] is None
+        finally:
+            await client.delete(f"/api/skills/{plain['id']}")
+    finally:
+        await client.delete(f"/api/skills/{skill_id}")
+

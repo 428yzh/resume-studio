@@ -326,8 +326,10 @@ export const useSkillStore = create<SkillState>((set) => ({
         return;
       }
       set({ knowledgeGraph: graph, graphSkillId: skillId, loadingGraph: false });
-      // 列表里的 has_graph 是生成前拉的，本地补上，省一次全量刷新
+      // 列表里的 has_graph 是生成前拉的，本地先补上（立刻翻转 chip），再刷一次列表
+      // 把 graph_summary 从服务端拿回来 —— 卡片正面的覆盖率只认服务端那一份
       set((s) => ({ skills: s.skills.map((k) => (k.id === skillId ? { ...k, has_graph: true } : k)) }));
+      void useSkillStore.getState().fetchSkills();
     } catch (e) {
       set({ error: (e as Error).message, loadingGraph: false });
     }

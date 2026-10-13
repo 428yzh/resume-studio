@@ -1,9 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSkillStore } from "@core/stores/skillStore";
 import { useQuizStore } from "@core/stores/quizStore";
 import ConfirmDialog from "@web/components/ConfirmDialog";
 import LearningPanel from "@web/components/LearningPanel";
+import KnowledgeGraph from "@web/components/KnowledgeGraph";
+import ScoreMap from "@web/components/ScoreMap";
+import SkillStatusChip from "@web/components/SkillStatusChip";
 import { GridIcon } from "@web/components/EmptyIcons";
 import { api } from "@core/api/client";
 import { findNodes, unitKeyOf, type Skill, type GraphNode } from "@core/models/skill";
@@ -11,6 +14,7 @@ import type { Question } from "@core/models/quiz";
 import { exportQuestionsToPDF } from "@core/services/pdfService";
 import { calculateAllStepScores, calculateStepScore, findCornell } from "@core/services/scoring";
 import AIErrorBox from "@web/components/AIErrorBox";
+import ElapsedTime from "@web/components/ElapsedTime";
 import LoadingDots from "@web/components/LoadingDots";
 import { isUnavailable, hasUnavailableField } from "@core/services/aiDegrade";
 import { useEntrance, entrance } from "@web/hooks/useEntrance";
@@ -67,15 +71,192 @@ function EditSkillModal({
   );
 }
 
+/* ── 卡片上的三个小组件。必须定义在 SkillLibrary() 外面 ──
+   写在组件体内的话，父级每次重渲染都会生成新的函数对象 = 新的组件类型，
+   React 把整张网格卸载重挂 —— 卡片的入场动画（opacity:0 → fade-in）跟着重播，
+   看起来「整页在刷新」。实测触发：康奈尔笔记打字 → 400ms 自动保存 → store set。 */
+function getProficiencyColor(value: number | null) {
+  if (value === null) return "bg-surface text-muted";
+  if (value >= 80) return "bg-green text-green";
+  if (value >= 60) return "bg-blue text-blue";
+  if (value >= 40) return "bg-amber text-amber";
+  return "bg-surface text-muted";
+}
+
+/* ── Animated counter ── */
+function AnimatedProficiency({ value }: { value: number }) {
+  const [display, setDisplay] = useState(value);
+  const prevRef = useRef(value);
+
+  useEffect(() => {
+    const from = prevRef.current;
+    const to = value;
+    if (from === to) { setDisplay(to); return; }
+
+    const duration = 600;
+    const start = performance.now();
+
+    const tick = (now: number) => {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(from + (to - from) * eased));
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+
+    prevRef.current = to;
+    requestAnimationFrame(tick);
+  }, [value]);
+
+  return <span>{display}</span>;
+}
+
+/* ── Isolated slider component to prevent table re-render on drag ── */
+function ProficiencySlider({ skill: sk }: { skill: Skill }) {
+  const [val, setVal] = useState<number | null>(sk.proficiency);
+  useEffect(() => setVal(sk.proficiency), [sk.proficiency]);
+
+  const commit = async () => {
+    if (val === null) return; // 没拖过就不写，别把「未验证」变成一个数字
+    try {
+      await api.put(`/api/skills/${sk.id}`, { proficiency: val });
+      const { skills } = useSkillStore.getState();
+      useSkillStore.setState({ skills: skills.map((s) => s.id === sk.id ? { ...s, proficiency: val } : s) });
+    } catch {}
+  };
+
+  return (
+    <div className="flex items-center gap-3 max-w-[180px]" onClick={(e) => e.stopPropagation()}>
+      <input
+        type="range" min={0} max={100}
+        value={val ?? 0}
+        title={val === null ? "拖动即表示自评（未经验证，只是你的预测）" : "自评熟练度（未经验证）"}
+        onChange={(e) => setVal(Number(e.target.value))}
+        onMouseUp={commit}
+        onTouchEnd={commit}
+        className="flex-1"
+      />
+      {val === null
+        ? <span className="text-xs font-medium text-muted whitespace-nowrap">未验证</span>
+        : (
+          <span className={`text-xs font-medium ${getProficiencyColor(val).split(" ")[1]}`}>
+            <AnimatedProficiency value={val} />%
+          </span>
+        )}
+    </div>
+  );
+}
+
+/* ── 技能卡片：回答三件事 —— 图谱长全了没 / 哪块虚 / 要练几步 ── */
+function SkillCard({ skill, expanded, delay, generatingGraph, onToggle, onGenerateGraph, onEdit, onDelete }: {
+  skill: Skill;
+  expanded: boolean;
+  delay: number;
+  generatingGraph: boolean;
+  onToggle: () => void;
+  onGenerateGraph: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const navigate = useNavigate();
+  const catStyle =
+    skill.category === "前端" ? "bg-blue-light text-blue" :
+    skill.category === "后端" ? "bg-green/10 text-green" :
+    skill.category === "数据库" ? "bg-amber/10 text-amber" :
+    "bg-surface text-slate";
+  const summary = skill.graph_summary ?? null;
+  const pct = summary?.total ? Math.round((summary.tested / summary.total) * 100) : null;
+
+  return (
+    <div
+      onClick={onToggle}
+      data-testid="skill-card"
+      style={{ opacity: 0, animation: `fade-in 0.3s ease-out ${0.12 + 0.04 * delay}s forwards` }}
+      className={`bg-canvas rounded-xl border p-5 cursor-pointer transition-colors ${
+        expanded ? "border-blue/40" : "border-hairline hover:border-blue/30"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-semibold text-ink truncate">{skill.name}</h3>
+          <div className="flex items-center gap-2 mt-1">
+            {skill.category && (
+              <span className={`text-[11px] rounded-full px-2 py-0.5 font-medium ${catStyle}`}>{skill.category}</span>
+            )}
+            {skill.source && <span className="text-[11px] text-muted">{skill.source}</span>}
+          </div>
+        </div>
+        <SkillStatusChip summary={skill.graph_summary} />
+      </div>
+
+      {/* 图谱覆盖率（设计 4.1）：覆盖率衡量「测没测过」，和有假分数的嫌疑对冲（结论 15）。
+          数字来自列表接口现算的 graph_summary —— 展开才 GET /graph，卡片正面等不起 */}
+      <div className="mt-4">
+        <div className="flex items-center gap-2">
+          <span className="flex-1 h-1.5 rounded-full bg-surface overflow-hidden">
+            <span className="block h-full rounded-full bg-blue transition-all duration-500" style={{ width: `${pct ?? 0}%` }} />
+          </span>
+          <span className="text-xs font-semibold text-slate tabular-nums w-9 text-right">
+            {pct === null ? "—" : `${pct}%`}
+          </span>
+        </div>
+        <div className="text-[11px] text-muted mt-1.5">
+          {summary
+            ? `图谱覆盖率 · ${summary.total} 个可测知识点里测了 ${summary.tested} 个`
+            : skill.has_graph ? "图谱覆盖率 · 加载中…" : "还没生成图谱"}
+        </div>
+        {summary && (
+          <div className="text-[11px] text-muted mt-0.5">
+            {summary.total} 个知识点 · {summary.units} 个学习单元
+            {summary.lowest && (
+              <> · 最低的一块：<span className="text-slate">{summary.lowest.title} {summary.lowest.score}</span></>
+            )}
+          </div>
+        )}
+      </div>
+
+      <p className="text-xs text-slate mt-3 leading-relaxed line-clamp-2">{skill.notes || "—"}</p>
+
+      <div className="flex items-center gap-3 mt-3" onClick={(e) => e.stopPropagation()}>
+        {/* 已生成就不给重新生成：节点 id 是分数落点和笔记归属的锚，重生成会把它们全冲掉 */}
+        {!skill.has_graph && (
+          <button
+            onClick={onGenerateGraph}
+            disabled={generatingGraph}
+            title="AI 按技能备注生成知识图谱，再据此切分成学习单元"
+            className="bg-blue text-white rounded-full px-3.5 py-1.5 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {generatingGraph ? "生成中…" : "生成图谱"}
+          </button>
+        )}
+        <button
+          onClick={() => navigate(`/skills/${skill.id}`)}
+          className="bg-blue-light text-blue rounded-full px-3.5 py-1.5 text-xs font-semibold hover:bg-blue-light/70 transition-colors"
+        >
+          打开工作台
+        </button>
+        <button onClick={onEdit} className="text-xs text-slate hover:text-blue transition-colors">编辑</button>
+        <button onClick={onDelete} className="text-xs text-red/60 hover:text-red transition-colors ml-auto">删除</button>
+      </div>
+    </div>
+  );
+}
+
 export default function SkillLibrary() {
   const navigate = useNavigate();
-  const { skills, resources, questions, learningPlan, loadingPlan, loading, error, fetchSkills, addSkill, updateSkill, deleteSkill, fetchResources, addResource, updateResource, deleteResource, fetchQuestions, addQuestion, updateQuestion, deleteQuestion, fetchLearningPlan, generateLearningPlan, knowledgeGraph, graphSkillId, fetchGraph, generateGraph, notes, fetchNotes } = useSkillStore();
+  const { skills, resources, questions, learningPlan, loadingPlan, planStartedAt, loading, error, fetchSkills, addSkill, updateSkill, deleteSkill, fetchResources, addResource, updateResource, deleteResource, fetchQuestions, addQuestion, updateQuestion, deleteQuestion, fetchLearningPlan, generateLearningPlan, knowledgeGraph, graphSkillId, fetchGraph, generateGraph, notes, fetchNotes } = useSkillStore();
   const [activeCategory, setActiveCategory] = useState("全部");
   const [showForm, setShowForm] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [expandedSkill, setExpandedSkill] = useState<number | null>(null);
   // 正在生成图谱的技能 id。store 的 loadingGraph 是全局的，卡片需要知道是不是「自己」在转
   const [graphFor, setGraphFor] = useState<number | null>(null);
+  // 图谱区的两种读法：掌握度 = 分数地图（带分带档），结构 = 网状图（只画结构，不带分）
+  const [graphView, setGraphView] = useState<"mastery" | "structure">("mastery");
+  // 正在出题的单元（key = skillId-step）与它的错误；按 key 显示，不然每张步骤卡都会挂同一条错误
+  const [quizBusy, setQuizBusy] = useState<string | null>(null);
+  const [quizErr, setQuizErr] = useState<{ key: string; msg: string } | null>(null);
   // 新建时不带 proficiency：没自评过就存 NULL，用一个预填的 50 冒充自评是假数据
   const [formData, setFormData] = useState({ name: "", category: "前端", notes: "" });
   const [newResource, setNewResource] = useState({ title: "", url: "", type: "article" });
@@ -280,168 +461,32 @@ export default function SkillLibrary() {
     setGraphFor(null);
   };
 
-  const getProficiencyColor = (value: number | null) => {
-    if (value === null) return "bg-surface text-muted";
-    if (value >= 80) return "bg-green text-green";
-    if (value >= 60) return "bg-blue text-blue";
-    if (value >= 40) return "bg-amber text-amber";
-    return "bg-surface text-muted";
+  // 单元出题（⑥）：把这一块的 node_ids 交给后端，题会挂回块里的节点 ——
+  // 答完分数落回图谱，分数地图上这块才亮得起来（不带 node_ids 的题不计分）
+  const handleUnitQuiz = async (skillId: number, stepKey: string, nodeIds?: string[]) => {
+    if (quizBusy) return;
+    setQuizBusy(stepKey);
+    setQuizErr(null);
+    try {
+      const { generateQuestions, createSession } = useQuizStore.getState();
+      const qs = await generateQuestions({
+        mode: "practice",
+        skill_id: skillId,
+        node_ids: nodeIds ?? [],
+        counts: { single_choice: 5, multi_choice: 2, essay: 1 },
+      });
+      if (!qs.length) {
+        setQuizErr({ key: stepKey, msg: useQuizStore.getState().error || "出题失败，请重试" });
+        return;
+      }
+      const session = await createSession("practice", qs.map((q) => q.id));
+      navigate(`/quiz/session/${session.id}`);
+    } catch {
+      setQuizErr({ key: stepKey, msg: "出题失败，请重试" });
+    } finally {
+      setQuizBusy(null);
+    }
   };
-
-  /* ── Animated counter ── */
-  function AnimatedProficiency({ value }: { value: number }) {
-    const [display, setDisplay] = useState(value);
-    const prevRef = useRef(value);
-
-    useEffect(() => {
-      const from = prevRef.current;
-      const to = value;
-      if (from === to) { setDisplay(to); return; }
-
-      const duration = 600;
-      const start = performance.now();
-
-      const tick = (now: number) => {
-        const elapsed = now - start;
-        const progress = Math.min(elapsed / duration, 1);
-        // Ease-out cubic
-        const eased = 1 - Math.pow(1 - progress, 3);
-        setDisplay(Math.round(from + (to - from) * eased));
-        if (progress < 1) requestAnimationFrame(tick);
-      };
-
-      prevRef.current = to;
-      requestAnimationFrame(tick);
-    }, [value]);
-
-    return <span>{display}</span>;
-  }
-
-  /* ── Isolated slider component to prevent table re-render on drag ── */
-  function ProficiencySlider({ skill: sk }: { skill: Skill }) {
-    const [val, setVal] = useState<number | null>(sk.proficiency);
-    useEffect(() => setVal(sk.proficiency), [sk.proficiency]);
-
-    const commit = async () => {
-      if (val === null) return; // 没拖过就不写，别把「未验证」变成一个数字
-      try {
-        await api.put(`/api/skills/${sk.id}`, { proficiency: val });
-        const { skills } = useSkillStore.getState();
-        useSkillStore.setState({ skills: skills.map((s) => s.id === sk.id ? { ...s, proficiency: val } : s) });
-      } catch {}
-    };
-
-    return (
-      <div className="flex items-center gap-3 max-w-[180px]" onClick={(e) => e.stopPropagation()}>
-        <input
-          type="range" min={0} max={100}
-          value={val ?? 0}
-          title={val === null ? "拖动即表示自评（未经验证，只是你的预测）" : "自评熟练度（未经验证）"}
-          onChange={(e) => setVal(Number(e.target.value))}
-          onMouseUp={commit}
-          onTouchEnd={commit}
-          className="flex-1"
-        />
-        {val === null
-          ? <span className="text-xs font-medium text-muted whitespace-nowrap">未验证</span>
-          : (
-            <span className={`text-xs font-medium ${getProficiencyColor(val).split(" ")[1]}`}>
-              <AnimatedProficiency value={val} />%
-            </span>
-          )}
-      </div>
-    );
-  }
-
-  /* ── 图谱树。⑦ 技能工作台会把它换成真正的主体视图，这里够用就行 ── */
-  function GraphTree({ nodes, depth = 0 }: { nodes: GraphNode[]; depth?: number }) {
-    return (
-      <ul className={depth === 0 ? "space-y-2" : "mt-1 space-y-1 border-l border-hairline pl-4"}>
-        {nodes.map((n) => (
-          <li key={n.id}>
-            <span className="text-xs text-charcoal">
-              <span className="text-muted mr-1.5 tabular-nums">{n.id}</span>
-              {n.title}
-            </span>
-            {n.children.length > 0 && <GraphTree nodes={n.children} depth={depth + 1} />}
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  /* ── 技能卡片：回答三件事 —— 图谱长全了没 / 哪块虚 / 要练几步 ── */
-  function SkillCard({ skill, expanded, delay, generatingGraph, onToggle, onGenerateGraph, onEdit, onDelete }: {
-    skill: Skill;
-    expanded: boolean;
-    delay: number;
-    generatingGraph: boolean;
-    onToggle: () => void;
-    onGenerateGraph: () => void;
-    onEdit: () => void;
-    onDelete: () => void;
-  }) {
-    const catStyle =
-      skill.category === "前端" ? "bg-blue-light text-blue" :
-      skill.category === "后端" ? "bg-green/10 text-green" :
-      skill.category === "数据库" ? "bg-amber/10 text-amber" :
-      "bg-surface text-slate";
-
-    return (
-      <div
-        onClick={onToggle}
-        data-testid="skill-card"
-        style={{ opacity: 0, animation: `fade-in 0.3s ease-out ${0.12 + 0.04 * delay}s forwards` }}
-        className={`bg-canvas rounded-xl border p-5 cursor-pointer transition-colors ${
-          expanded ? "border-blue/40" : "border-hairline hover:border-blue/30"
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="font-semibold text-ink truncate">{skill.name}</h3>
-            <div className="flex items-center gap-2 mt-1">
-              {skill.category && (
-                <span className={`text-[11px] rounded-full px-2 py-0.5 font-medium ${catStyle}`}>{skill.category}</span>
-              )}
-              {skill.source && <span className="text-[11px] text-muted">{skill.source}</span>}
-            </div>
-          </div>
-          <span className={`shrink-0 text-[11px] rounded-full px-2.5 py-0.5 font-medium ${
-            skill.has_graph ? "bg-blue-light text-blue" : "bg-surface text-muted"
-          }`}>{skill.has_graph ? "已生成图谱" : "未生成图谱"}</span>
-        </div>
-
-        {/* 图谱覆盖率 —— 覆盖率衡量的是「测没测过」，要等 ⑥ 分数落回节点才有数 */}
-        <div className="mt-4">
-          <div className="flex items-center gap-2">
-            <span className="flex-1 h-1.5 rounded-full bg-surface" />
-            <span className="text-xs font-semibold text-muted">—</span>
-          </div>
-          <div className="text-[11px] text-muted mt-1.5">
-            图谱覆盖率 · {skill.has_graph ? "还没有节点被验证过" : "还没生成图谱"}
-          </div>
-        </div>
-
-        <p className="text-xs text-slate mt-3 leading-relaxed line-clamp-2">{skill.notes || "—"}</p>
-
-        <div className="flex items-center gap-3 mt-3" onClick={(e) => e.stopPropagation()}>
-          {/* 已生成就不给重新生成：节点 id 是分数落点和笔记归属的锚，重生成会把它们全冲掉 */}
-          {!skill.has_graph && (
-            <button
-              onClick={onGenerateGraph}
-              disabled={generatingGraph}
-              title="AI 按技能备注生成知识图谱，再据此切分成学习单元"
-              className="bg-blue text-white rounded-full px-3.5 py-1.5 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {generatingGraph ? "生成中…" : "生成图谱"}
-            </button>
-          )}
-          <button onClick={onEdit} className="text-xs text-slate hover:text-blue transition-colors">编辑</button>
-          <button onClick={onDelete} className="text-xs text-red/60 hover:text-red transition-colors ml-auto">删除</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -556,10 +601,12 @@ export default function SkillLibrary() {
       {/* 技能卡片列表 */}
       {!loading && filteredSkills.length > 0 && (
         <div style={entrance(mounted, 0.1)}>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {/* grid-flow-row-dense：详情是整宽的一条，紧跟被点的卡片后面；不 dense 的话
+              被点那张之后的卡片会被挤下去、同排留个空洞 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 grid-flow-row-dense">
             {filteredSkills.map((skill, si) => (
+              <Fragment key={skill.id}>
               <SkillCard
-                key={skill.id}
                 skill={skill}
                 expanded={expandedSkill === skill.id}
                 delay={si}
@@ -569,17 +616,13 @@ export default function SkillLibrary() {
                 onEdit={() => setEditingSkill(skill)}
                 onDelete={() => setDeleteSkillTarget(skill.id)}
               />
-            ))}
-          </div>
-
-          {/* 展开的详细信息（整宽，落在卡片网格下方） */}
-          {(() => {
-            const skill = filteredSkills.find((s) => s.id === expandedSkill);
-            if (!skill) return null;
-            // 只在图谱确实属于当前技能时才渲染，否则展开 A 再展开 B 会闪出 A 的树
-            const ownGraph = graphSkillId === skill.id ? knowledgeGraph : null;
-            return (
-              <div className="mt-4 bg-canvas rounded-xl border border-blue/20 overflow-hidden">
+              {/* 详情跟在被点的那张卡片后面展开。放在网格外面时，14 张卡片要点完滚 1200px
+                  才看得见 —— 实测「点卡片没有动静」就是这个 */}
+              {expandedSkill === skill.id && (() => {
+                // 只在图谱确实属于当前技能时才渲染，否则展开 A 再展开 B 会闪出 A 的树
+                const ownGraph = graphSkillId === skill.id ? knowledgeGraph : null;
+                return (
+              <div className="col-span-full bg-canvas rounded-xl border border-blue/20 overflow-hidden">
                 <div className="flex items-center justify-between gap-3 px-4 py-2 bg-blue-light/20 text-xs text-blue font-medium border-b border-blue/10">
                   <span>{skill.name} · 详细信息</span>
                   {/* 自评只在展开区（D1）：卡片正面整张可点展开，滑块放正面等于把「点中心展开」
@@ -592,20 +635,35 @@ export default function SkillLibrary() {
                 {/* 知识图谱 —— 技能工作台（实施顺序 ⑦）会把它做成主体，这里先够看 */}
                 {skill.has_graph && (
                   <div className="px-4 py-3 border-b border-hairline" data-testid="skill-graph">
-                    <div className="flex items-center gap-2 mb-2">
-                      <h4 className="text-sm font-semibold text-ink">知识图谱</h4>
-                      {ownGraph?.degraded && (
-                        <span
-                          title={`结构约束没满足：${ownGraph.issues.join("；")}`}
-                          className="text-[11px] rounded-full px-2 py-0.5 font-medium bg-amber/10 text-amber"
-                        >
-                          结构降级
-                        </span>
-                      )}
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-semibold text-ink">知识图谱</h4>
+                        {ownGraph?.degraded && (
+                          <span
+                            title={`结构约束没满足：${ownGraph.issues.join("；")}`}
+                            className="text-[11px] rounded-full px-2 py-0.5 font-medium bg-amber/10 text-amber"
+                          >
+                            结构降级
+                          </span>
+                        )}
+                      </div>
+                      <div className="bg-surface rounded-full p-1 text-xs shrink-0" data-testid="graph-view-toggle">
+                        {([["mastery", "掌握度"], ["structure", "结构"]] as const).map(([v, text]) => (
+                          <button
+                            key={v}
+                            onClick={() => setGraphView(v)}
+                            className={`rounded-full px-3 py-1 font-semibold transition-colors ${
+                              graphView === v ? "bg-canvas shadow-sm text-ink" : "text-slate hover:text-ink"
+                            }`}
+                          >{text}</button>
+                        ))}
+                      </div>
                     </div>
-                    {ownGraph?.nodes.length
-                      ? <GraphTree nodes={ownGraph.nodes} />
-                      : <p className="text-xs text-muted">加载中…</p>}
+                    {!ownGraph?.nodes.length
+                      ? <p className="text-xs text-muted">加载中…</p>
+                      : graphView === "mastery"
+                        ? <ScoreMap nodes={ownGraph.nodes} scores={ownGraph.scores ?? {}} label={skill.name} />
+                        : <KnowledgeGraph nodes={ownGraph.nodes} />}
                   </div>
                 )}
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1055,6 +1113,15 @@ export default function SkillLibrary() {
                                               </span>
                                             </div>
                                           )}
+                                          <div className="ml-auto shrink-0 flex items-center gap-3">
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); handleUnitQuiz(skill.id, `${skill.id}-${step.step}`, step.node_ids); }}
+                                            disabled={quizBusy !== null}
+                                            title="按这块图谱出一套题，答完分数落回这块节点"
+                                            className="shrink-0 text-xs font-medium text-blue hover:text-blue/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                          >
+                                            {quizBusy === `${skill.id}-${step.step}` ? "出题中…" : "考一考"}
+                                          </button>
                                           {isStepCompleted(skill.id, step.step) ? (
                                             <button
                                               onClick={(e) => { e.stopPropagation(); toggleStepComplete(skill.id, step.step); }}
@@ -1076,7 +1143,11 @@ export default function SkillLibrary() {
                                               标记完成
                                             </button>
                                           )}
+                                          </div>
                                         </div>
+                                        {quizErr?.key === `${skill.id}-${step.step}` && (
+                                          <p className="mt-1.5 text-[11px] text-red">{quizErr.msg}</p>
+                                        )}
                                       </div>
                                     );
                                   })}
@@ -1135,15 +1206,18 @@ export default function SkillLibrary() {
                                   </button>
                                 </div>
                                 {loadingPlan && (
-                                  <p className="text-xs text-muted text-center mt-1">生成需 1-3 分钟，可收起页面后台等待，完成后自动显示</p>
+                                  <p className="text-xs text-muted text-center mt-1">生成 + AI 自检通常需 1-3 分钟 · <ElapsedTime startedAt={planStartedAt} /> · 可收起页面后台等待，完成后自动显示</p>
                                 )}
                               </div>
                             )}
                           </div>
                         </div>
                         </div>
-            );
-          })()}
+                );
+              })()}
+              </Fragment>
+            ))}
+          </div>
         </div>
       )}
 
