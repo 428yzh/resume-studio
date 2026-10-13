@@ -26,7 +26,8 @@ class FakeUsage:
 class FakeResp:
     def __init__(self, content="润色后的内容", usage=None):
         message = type("M", (), {"content": content})()
-        self.choices = [type("C", (), {"message": message})()]
+        # finish_reason 不能缺：Agent.call 会看它决定是否翻倍 token 重试
+        self.choices = [type("C", (), {"message": message, "finish_reason": "stop"})()]
         self.usage = usage or FakeUsage()
 
 
@@ -106,6 +107,39 @@ async def test_audit_ok_and_hardening(fake_client, audit_capture):
     assert record["injection"] == 0
     assert record["response"] == "润色后的内容"
     assert record["error"] is None
+
+
+async def test_agent_calls_labelled_by_feature(fake_client, audit_capture):
+    """走 Agent 的调用（图谱/计划/讲解）feature 不能全记成 "call" —— 那就等于没打标签"""
+    await ai_service.generate_knowledge_graph("React", "备注")
+    assert audit_capture.records[-1]["feature"] == "generate_knowledge_graph"
+
+
+async def test_feynman_assess_labelled_by_feature(fake_client, audit_capture):
+    """_chat_json 是定级/覆盖度的共同帧，feature 必须越过它记成真正的功能名"""
+    from app.services import feynman as feynman_service
+
+    fake_client.chat.completions.resp = FakeResp(
+        content='{"level": 2, "action": "ask_example", "blind_spot": "", "error": ""}'
+    )
+    await feynman_service.assess_level("React Hooks", [{"role": "user", "content": "讲"}], 1, 2, 2)
+    assert audit_capture.records[-1]["feature"] == "assess_level"
+
+    fake_client.chat.completions.resp = FakeResp(
+        content='{"covered": ["1"], "action": "ask_example", "blind_spot": "", "error": ""}'
+    )
+    await feynman_service.assess_coverage(
+        "React Hooks", [{"role": "user", "content": "讲"}], [{"id": "1", "title": "块一"}], 1, 2, 2
+    )
+    assert audit_capture.records[-1]["feature"] == "assess_coverage"
+
+
+async def test_audit_duration_unit(audit_capture):
+    """duration_ms 就是毫秒 —— 所有调用方传的都是 (monotonic()-start)*1000，不能再乘一次"""
+    from app.services.audit import audit
+
+    audit("unit_test", status="ok", duration_ms=1200.0)
+    assert audit_capture.records[-1]["duration_ms"] == 1200
 
 
 async def test_audit_error(fake_client, audit_capture):

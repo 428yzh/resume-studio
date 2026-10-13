@@ -88,7 +88,7 @@ def audit(
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
-            "duration_ms": int(duration_ms * 1000),
+            "duration_ms": int(duration_ms),
             "chars": len(response or ""),
             "error": error or None,
             "response": response or "",

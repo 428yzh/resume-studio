@@ -38,6 +38,10 @@ def _get_client() -> Optional[AsyncOpenAI]:
 # 未来新增 AI 调用自动受保护，无需改调用点。_original_create 由 _patch_audit 捕获。
 _original_create = None
 
+# 共同帧：多个功能共用同一层中转，照实取名会全记成这层名 —— 再往上一层才是功能名。
+# call = Agent.call（图谱/计划/讲解/复盘）；_chat_json = feynman 定级/覆盖度共用的小调用。
+_SHARED_FRAMES = ("call", "_chat_json")
+
 
 def _patch_audit(client) -> None:
     """把 client.chat.completions.create 换成审计 + 加固包装（幂等，重复调用不嵌套）。"""
@@ -49,7 +53,11 @@ def _patch_audit(client) -> None:
     _original_create = completions.create
 
     async def wrapped(**kwargs):
-        feature = sys._getframe(1).f_code.co_name  # 调用方函数名作 feature 标签
+        # 调用方函数名作 feature 标签，共同帧（见 _SHARED_FRAMES）跳过一层再取
+        frame = sys._getframe(1)
+        feature = frame.f_code.co_name
+        if feature in _SHARED_FRAMES and frame.f_back is not None:
+            feature = frame.f_back.f_code.co_name
         messages, injected = harden_messages(kwargs.get("messages") or [])
         kwargs = dict(kwargs)
         kwargs["messages"] = messages
