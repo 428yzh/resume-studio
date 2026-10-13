@@ -4,6 +4,7 @@ import ResumeEditor from "@web/pages/ResumeEditor";
 import ResumeList from "@web/pages/ResumeList";
 import JDAnalysis from "@web/pages/JDAnalysis";
 import SkillLibrary from "@web/pages/SkillLibrary";
+import SkillWorkbench from "@web/pages/SkillWorkbench";
 import QuizList from "@web/pages/QuizList";
 import QuizSession from "@web/pages/QuizSession";
 import QuizExam from "@web/pages/QuizExam";
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/resumes/:id" element={<ResumeEditor />} />
         <Route path="/jd" element={<JDAnalysis />} />
         <Route path="/skills" element={<SkillLibrary />} />
+        <Route path="/skills/:id" element={<SkillWorkbench />} />
         <Route path="/mock-interview" element={<MockInterviewList />} />
         <Route path="/mock-interview/:id" element={<MockInterview />} />
         <Route path="/quiz" element={<QuizList />} />
