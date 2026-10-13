@@ -817,6 +817,8 @@ docker compose down
 | `frontend/nginx.conf` | SPA fallback + `/api` 代理到 backend |
 | `.env.example` | 环境变量模板 |
 
+**构建提速（2026-10-13）**：两个 Dockerfile 的依赖安装都走国内镜像（npm → `registry.npmmirror.com` / pip → 清华 TUNA）+ BuildKit cache mount（`--mount=type=cache`，依赖层失效时从本机缓存复用下载，不重下）。装依赖那层只在 `package*.json` / `requirements.txt` 变化时才重跑 —— 改源码只重跑 `COPY . .` + build（前提：`COPY package*.json` 在 `RUN npm ci` 之前，见该文件注释）。**别在服务器上跑 `docker builder prune` / `docker system prune -a`**，会把构建缓存清光 → 下次全量重下（一次 20+ 分钟）。
+
 ## 识图能力
 
 你的底层模型（当前为 deepseek-v4-flash）**不具备原生识图能力**。遇到图片时，不要用 Read 工具看图片，改用 `vision.js`：
