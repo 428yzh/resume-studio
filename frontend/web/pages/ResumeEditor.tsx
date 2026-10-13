@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useResumeStore } from "@core/stores/resumeStore";
 import { resumeToPlainText, sectionHasContent } from "@core/services/resumeService";
 import { exportToPDF } from "@core/services/pdfService";
+import { exportResumeToDocx } from "@core/services/docxService";
 import SectionForm from "@web/components/SectionForm";
 import JDMatchTab from "@web/components/JDMatchTab";
 import ConfirmDialog from "@web/components/ConfirmDialog";
@@ -258,6 +259,11 @@ export default function ResumeEditor() {
     const tmpl = template || templates[0];
     if (!tmpl) return;
     exportToPDF(resumeData, tmpl, displaySections);
+  };
+
+  const handleExportWord = () => {
+    const tmpl = template || templates[0];
+    exportResumeToDocx(title || "简历", tmpl?.structure.style?.primary_color, displaySections);
   };
 
   const handleExportBOSS = () => {
@@ -526,6 +532,12 @@ export default function ResumeEditor() {
             className="bg-transparent text-ink border border-hairline rounded-full px-5 py-2 font-semibold text-sm hover:bg-surface transition-all active:scale-95"
           >
             导出 PDF
+          </button>
+          <button
+            onClick={handleExportWord}
+            className="bg-transparent text-ink border border-hairline rounded-full px-5 py-2 font-semibold text-sm hover:bg-surface transition-all active:scale-95"
+          >
+            导出 Word
           </button>
           <button
             onClick={handleExportBOSS}
