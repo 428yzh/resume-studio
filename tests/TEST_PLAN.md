@@ -180,6 +180,20 @@ tests/
 - TC-STORE-FEYN-006: FeynmanStore addProblem 手动添加问题
 - TC-STORE-FEYN-007: FeynmanStore setProblemStatus 标记解决 / 重开
 
+### TC-SET 系列（应用设置：AI 地址/key/模型，test_settings.py）
+> 红线：任何响应体（含错误信息）都不许出现 key 明文 —— GET 只回掩码尾巴 + 来源。测试机 .env 可能有真 key，用例全部把 `_ENV` 与 `settings.deepseek_*` 打桩成已知值。
+- TC-SET-001: GET /api/settings 未配置 → `ai_configured=false`、`key_source=null`；地址/模型回 .env 生效值 + 来源标 env
+- TC-SET-002: .env 里配了 key → 只回掩码尾巴（`key[-4:]`），明文不进响应体
+- TC-SET-003: PUT key → 落库 + `settings.deepseek_api_key` 立即生效 + 清 `ai_service._client` 缓存（下一条 AI 调用换新 key，不用重启）
+- TC-SET-004: PUT base_url / model 同理，来源变 db
+- TC-SET-005: 三态语义 —— 省略字段不动（只改模型不误清 key）；空串 = 清除该覆盖、回落 .env
+- TC-SET-006: 重复 PUT 是覆盖同一行（upsert 不是追加）
+- TC-SET-007: 启动装载 `load_ai_overrides` —— DB 覆盖生效、没覆盖的回落 .env；覆盖删掉后再装载回落
+- TC-SET-008: 没 key 时测试连接 → `ok=false`「尚未配置 API key」，不发请求
+- TC-SET-009: 测试连接 = GET `{base}/models`（列模型，不烧 token）；200 → 回模型 id 列表（非字符串项丢弃）；错误信息也不带明文 key
+- TC-SET-010~012: 401 → 「无效」；连不上 → ok=false；其他状态码（429）→ 报状态码
+- TC-SET-013: 非法输入 400（key 含换行 / key >200 字符 / model >100 字符 / base_url 缺 http(s):// 协议头）
+
 ## 前端测试用例
 
 ### TC-MODEL 系列
@@ -227,6 +241,13 @@ tests/
 
 > 计时锚点（`startedAt` = 请求发出时刻，收起再展开不归零）无自动化用例：靠 store/面板处的一行时间戳 + 代码注释约束，手工冒烟。
 
+### TC-SECTION-ORDER 系列（区块自定义顺序，resume_service.test.ts）
+- TC-SECTION-ORDER-001: `orderSectionKeys` 没保存过顺序（缺省 / 空数组 / 非数组）→ 原序；按保存顺序重排，没排到的保持原序补在后；保存顺序里已删的 key / 非字符串被忽略（脏数据不能让区块消失）
+- TC-SECTION-ORDER-002: `moveSectionKey` 上移/下移一位；首尾越界、key 不存在时原样返回且不改入参
+- TC-SECTION-ORDER-003: `getOrderedSections` 尊重 `sections.__order`（自定义顺序优先于模板顺序）
+
+> 顺序只是一个保留键 `sections.__order`（见 `resumeService.ts::SECTION_ORDER_KEY`），后端把它当不透明 JSON 存取，无接口改动。
+
 ### TC-DOCX 系列（导出 Word，docx_service.test.ts）
 - TC-DOCX-001: 区块 → 通用块（`resumeToDocBlocks`）—— header 独立成姓名/求职意向/联系方式一行；正文区块带小标题；空/坏数据/未知区块不出块也不炸（未填区块不占标题）
 - TC-DOCX-002: 经历在职显示「至今」；描述按换行拆段（docx 的 TextRun 不渲染 `\n`，必须拆成独立段落）
@@ -236,8 +257,19 @@ tests/
 > 下载动作（`URL.createObjectURL` + `a.click()`）无自动化用例：浏览器 API，靠手工冒烟。
 > docx 走动态 import 独立 chunk（391KB），只点「导出 Word」时才拉取。
 
-### TC-E2E 系列（Playwright，frontend/e2e/skills.spec.ts）
+### TC-TOUR 系列（首访导览，onboarding.test.ts）
+- TC-TOUR-001: `buildTourSteps` —— 未配 key 时多一步「先配置 AI 服务」（锚点 `nav-settings`）；首步无锚点（居中欢迎弹）；末步锚在「新建简历」；每步锚点互不重复、都有标题和正文
+- TC-TOUR-002: 「看过」标记 —— 默认 false；`markTourSeen()` 后 `tourSeen()` 为 true 且 `localStorage` 里是 `"1"`
+
+> 锚点走 `data-tour` 属性，不绑文案（改界面文字不会让导览指错）；`Layout.tsx` 的导航项和 `ResumeList.tsx` 的「新建简历」按钮挂着锚点，改锚点名要同步 `onboarding.ts`。
+> driver.js 装配（400ms 延迟避开入场动画、锚点缺失跳步、`onDestroyed` 记标记）在 `AppTour.tsx`，UI 层无单测，由 E2E 覆盖。
+
+### TC-E2E 系列（Playwright，frontend/e2e/*.spec.ts）
 - TC-E2E-SKILLS-001（重挂回归，2026-10-08）：触发一次纯本地 state 重渲染（开/关添加表单），断言先前捕获的卡片 DOM 节点 `isConnected` 仍为 true。内联组件定义（组件体内写 `function SkillCard`）会让父级每次重渲染换掉组件类型 → 整张网格卸载重挂 → 卡片入场动画重播 = 「一打字整页刷新」；重挂则旧节点 detach，断言失败。
+- TC-E2E-RESUME-001（区块移动，resume.spec.ts）：编辑器里把「教育背景」上移一格 → 列表顺序立刻变 → 保存（等 PUT 200）→ 刷新后顺序仍在（顺序真的落进 `sections.__order`，不是前端临时态）。清理由 describe 的 afterEach API DELETE 兜底
+- 坑：`allTextContents()` 不等渲染，刷新后立刻读会读到空数组 —— 用例用 `expect.poll` 等顺序出现
+- TC-E2E-TOUR-001（首访导览，onboarding.spec.ts）：全新 context（Playwright 默认无 localStorage）→ 进 `/resumes` 弹「欢迎使用 Resume Pro」→ 关闭 → 标记落 localStorage → 刷新等 900ms 不再弹
+- 坑：导览会盖住整页，且只在落地页 `/resumes` 弹 —— 访问该路径的 spec（navigation / resume）必须 `addInitScript` 预置 `onboarding__tour_seen`，否则连导航都点不到；断言「不再弹」要先等过 400ms 的延迟窗口，否则「还没弹」会被误当成「不弹了」
 
 ### TC-STORE 系列
 - TC-STORE-RESUME-001: ResumeStore 创建简历
@@ -256,6 +288,9 @@ tests/
 - TC-STORE-CHAT-004: 开场失败 → error 置位、无残留半截；retry 重发开场成功（结论 18）
 - TC-STORE-CHAT-005: 回复中途断 → 保留半截 AI 文字 + error；retry 重发该轮、半截被替换不重复追加（结论 19）
 - TC-STORE-CHAT-006: ask 追加 user 消息，请求体带对话历史（截断后）
+- TC-STORE-SET-001: SettingsStore fetchSettings 从 GET /api/settings 装载（settings_store.test.ts）；失败保持 state 不抛（老后端/网络抖动不弹错）
+- TC-STORE-SET-002: saveConfig 只改地址/模型时请求体**不含 api_key 字段**（留空=不改，避免误清 key）；clearKey 发空串
+- TC-STORE-SET-003: testKey 透传 `{ok, detail, models}`
 
 ### TC-HL 系列（划词高亮）
 - TC-HL-001: applyHighlights 基础匹配/多处高亮

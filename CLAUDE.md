@@ -4,7 +4,7 @@
 
 ## 核心功能
 
-1. **模板化简历编写** — 3 套简历模板，区块化编辑（8 种区块类型），一键导出 PDF / **导出 Word（.docx，方便在 Word 里继续改）**
+1. **模板化简历编写** — 3 套简历模板，区块化编辑（8 种区块类型），**区块可上/下移动**（自定义顺序存 `sections.__order`，编辑页 / 预览 / PDF / Word 导出共用同一份顺序；不拖拽 —— 两个小按钮就够），一键导出 PDF / **导出 Word（.docx，方便在 Word 里继续改）**
 2. **AI 润色简历** — 接入 DeepSeek API（SSE 流式），语法修正、STAR 法则优化、ATS 关键词增强
 3. **JD 分析与学习路径** — 导入职位描述，AI 提取技术栈，自动导入技能库，生成学习指引和面试题
 4. **PDF 简历导入** — 上传 PDF 文件，AI 自动解析为结构化 sections 数据
@@ -18,6 +18,8 @@
 12. **费曼教学 · 数字学生** — 你给 AI 讲课，AI 批判式听讲。五级理解状态机（混沌/字面/关联/重构/辩证），等级有界升降（+1/-1、禁跳级），徽章挂气泡旁；**讲错自动降级 + 温和纠正（correction 动作）**，L3 广度追问 ×2、L5 深度追问 ×2 预算控制；薄弱点累计进 PPT 报告；SSE 流式对话（max_tokens 4096）+ 报告生成（python-pptx 下载）。**聊天状态按房间隔离**（Zustand `rooms: Record<id, RoomState>`），不同房间的流式/消息互不干扰。**问题跟踪**：房间内手动记录教学缺陷/卡点，AI 讲错/讲含糊只在回复里提示、绝不自动建项；某轮 AI 零卡点自动解决未解决项（非破坏式，可重开），列表页「有未解决问题」presence 标记。**等级 = 知识点覆盖度（D12）**：点单 = 技能图谱顶层节点，建房间时冻结（`knowledge_points`），每轮 AI 报累计讲对的点（`covered_points`，编的 id 一律清掉），`level_from_coverage` 分档（0→L1 / <50%→L2 / <80%→L3 / <100%→L4 / 100%→L5，阈值只在 `_COVERAGE_BANDS`）——**覆盖集合没涨的轮次等级原地不动**（根治「每说一句就升一级」），涨了才走禁跳级；没图谱的房间（点单空）走旧的 AI 提级路径，零破坏。前端顶部「知识覆盖 k/n」条（✓ 实线蓝 / ○ 虚线灰）即是正反馈，未覆盖点进 PPT 薄弱点页。SQLite 连接启用 `PRAGMA foreign_keys=ON` 保证级联删除生效
 13. **多 Agent 评审管线** — 3 个教学生成函数（`explain_topic` / `generate_learning_guide` / `generate_learning_plan`）生成内容先经**资深讲师**（内容质量）+ **模拟用户**（用户适配度）双 agent 评审，不合格则反馈增量注入重新生成（棘轮回滚，上下文不丢）；评审只输出 JSON 反馈、绝不自己生成；无 key / 解析失败一律放行。**复习板块已全量删除**（后端 `/cornell-review`、`/review-questions` 路由 + 前端 AI 批改/复习按钮 + Ebbinghaus 记忆曲线），保留康奈尔记笔记本体
 14. **AI 审计日志 + 防提示词注入** — 单点补丁包装 `client.chat.completions.create`（`_get_client` 内 `_patch_audit`，幂等，覆盖全部调用点含 feynman）：每次 AI 调用一行 JSON 落 `backend/logs/ai_audit.log`（RotatingFileHandler 5MB×3，字段：feature/status/injection/token 用量/耗时/生成内容全文，流式 usage 取最后 chunk、取不到按 4 字符/token 估算）。安全分两层（参考 DeepSeek-Harness 指令/数据分离）：L1 防注入声明 + user 内容 `<user_input>` 定界符包裹；L2 注入模式正则检测（忽略指令/system prompt/角色扮演/DAN mode）命中 → 日志标记 `injection=1`。job_service 的 httpx 直连单独加声明 + 打点。审计失败只吞掉不影响主流程。**feature 标签取调用方函数名，要跳过 `Agent.call` 这层共同帧**（不跳的话图谱/计划/讲解/复盘全记成 `call`，等于没打标签）。`duration_ms` 单位就是毫秒（2026-10-03 修：`audit()` 里曾对已是毫秒的值又乘 1000，日志里 13 秒的调用记成 13125000；所有调用方传的都是 `(monotonic()-start)*1000`，已随 TC-AUDIT 的单位断言钉住）
+15. **AI 服务配置（设置页）** — `/settings`（右上角 ⚙ 入口）：**接口地址 / API key / 模型**三项可配，存 `app_settings` 表（**DB 覆盖 .env、.env 兜底**），保存即热生效（写运行时 settings + 清 AI client 缓存），不重启。**key 明文永不回前端**（GET 只回「配没配 + 掩码尾巴」）；`PUT /ai-config` 三态 —— 省略=不动 / 空串=清除回落 .env / 非空=设置。「测试连接」= `GET {base}/models`（200 有效 / 401 无效，不发消息不烧 token），顺带把可用模型 id 列表带回前端做输入建议（**点一下填入的显式列表，不用 `<datalist>`** —— Chrome 会拿输入框现值过滤 datalist 建议：当前是 `deepseek-v4-flash` 时，服务端报的 `deepseek-flash`/`deepseek-v4-pro` 全被滤掉，点开恒为空；实测该端点报的列表不含 `deepseek-v4-flash` 这类别名，列表只是建议不是白名单）。未配 key 时：导航项变琥珀 + 全站横幅「去设置 →」。**模型名唯一来源 `settings.deepseek_model`**（2026-10-13 前 19 处写死已收敛；search.js 的 `WEBSEARCH_MODEL` 同源、不再自带兜底）。已知锁定：岗位推荐 / 资源联网搜索走 DeepSeek 专属 `/anthropic` 端点，换非 DeepSeek 服务时降级（返回空列表，页面已写明）
+16. **首访引导（一次性聚光灯导览）** — driver.js（~5KB 零依赖），只在落地页 `/resumes` 自动弹一次；走完 / 跳过 / Esc 都算看过，`onboarding__tour_seen` 记 localStorage，之后永不再弹（**没有问号重开入口**）。步骤 5-6 步：无锚点欢迎步（居中）→ 未配 AI key 时多一步指向 ⚙ 设置 → JD 分析 → 技能库 → 题库 → 收尾在「新建简历」按钮。**锚点走 `data-tour` 属性**（`core/services/onboarding.ts` 按名字引用，Layout 导航项 / 设置入口 / ResumeList 按钮上挂着），认锚点不认文案 —— 改界面文字不会让导览指错；锚点没渲染出来就跳过该步，宁缺勿指错。**没做 checklist 新手卡**：应用状态一眼可见（简历列表空态、技能未验证、题库空态各自有 CTA），常驻面板为一次性需求不值当
 
 ## 端口配置
 
@@ -42,7 +44,7 @@
 | Word | docx v9 | 简历导出 `.docx`（`core/services/docxService.ts`）。**动态 import，独立 chunk（391KB），只点导出时才拉**，不进主 bundle |
 | 状态管理 | Zustand v5 | 零 DOM 依赖 |
 | 数据库 | SQLite + aiosqlite | 异步，无需额外部署 |
-| 测试 | pytest + httpx + vitest + Playwright | 后端 149 / 前端 84 / E2E 10 |
+| 测试 | pytest + httpx + vitest + Playwright | 后端 162 / 前端 100 / E2E 12 |
 
 ## 架构
 
@@ -52,7 +54,7 @@
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           React 前端 (SPA)                          │
 │                                                                     │
-│  ┌─ App.tsx (路由入口, 16 条) ─────────────────────────────────┐  │
+│  ┌─ App.tsx (路由入口, 17 条) ─────────────────────────────────┐  │
 │  │                                                               │  │
 │  │  /            ─→ redirect /resumes                            │  │
 │  │  /resumes     ─→ ResumeList   ─→ ResumeEditor                │  │
@@ -68,15 +70,17 @@
 │  │  /quiz/records        ─→ QuizRecords                         │  │
 │  │  /quiz/records/:id    ─→ QuizRecordDetail                    │  │
 │  │  /feynman     ─→ FeynmanRoomList ─→ FeynmanRoom              │  │
+│  │  /settings    ─→ Settings (AI 服务: 地址 / key / 模型)         │  │
 │  │                                                               │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ┌─ Layout (导航栏：简历管理 / JD 分析 / 面试题库 /               ┐  │
-│  │           模拟面试 / 技能库；费曼复习入口见技能库页头)          │  │
+│  │           模拟面试 / 技能库；费曼复习入口见技能库页头；        │  │
+│  │           右上角：设置(⚙) —— 未配 AI key 时高亮 + 全站横幅)     │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ┌─ core/ (纯逻辑层) ──────────┐   ┌─ web/ (UI 层) ────────────┐  │
-│  │  api/    ← HttpClient 接口  │   │  components/ (22 个)      │  │
+│  │  api/    ← HttpClient 接口  │   │  components/ (23 个)      │  │
 │  │  models/ ← TypeScript 类型  │   │   Layout / SectionForm     │  │
 │  │  stores/ ← Zustand 状态     │   │   ResumePDF / JDMatchTab   │  │
 │  │  services/ ← 业务逻辑       │   │   JobRecommend / JobDetail │  │
@@ -87,8 +91,8 @@
 │                                    │   AnimatedNumber / LoadingDots│
 │                                    │   EmptyIcons / LevelBadge  │  │
 │                                    │   KnowledgeGraph / ScoreMap│  │
-│                                    │   SkillStatusChip          │  │
-│                                    │  pages/ (14 个)            │  │
+│                                    │   SkillStatusChip / AppTour │  │
+│                                    │  pages/ (15 个)            │  │
 │                                    │   ResumeList / ResumeEditor│
 │                                    │   JDAnalysis / SkillLibrary│
 │                                    │   SkillWorkbench           │  │
@@ -105,7 +109,7 @@
 │                                                                     │
 │  ┌─ main.py (FastAPI app, CORS, 路由挂载) ──────────────────────┐  │
 │  │  lifespan: init_db → yield                                    │  │
-│  │  挂载 10 个 router (共 67 个 endpoint):                       │  │
+│  │  挂载 11 个 router (共 70 个 endpoint):                       │  │
 │  │    /health            → health.py                             │  │
 │  │    /api/resumes       → resumes.py  (CRUD + PDF import)       │  │
 │  │    /api/templates     → templates.py (list / detail)          │  │
@@ -119,9 +123,10 @@
 │  │    /api                → quiz.py (questions + quiz sessions)   │  │
 │  │    /api/mock-interview → mock_interview.py (start/answer/end)  │  │
 │  │    /api/feynman       → feynman.py (五级教学房间 + SSE + PPT)  │  │
+│  │    /api/settings      → settings.py (AI 服务: 地址/key/模型)   │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
-│  ┌─ models/ (14 张表) ─────────┐   ┌─ schemas/ (7 个模块) ─────┐  │
+│  ┌─ models/ (15 张表) ─────────┐   ┌─ schemas/ (7 个模块) ─────┐  │
 │  │  Resume                     │   │  resume / template         │  │
 │  │  ResumeTemplate             │   │  jd / skill / job          │  │
 │  │  JDAnalysis                 │   │  quiz / feynman            │  │
@@ -132,6 +137,7 @@
 │  │  MockInterview / Message    │   │                            │  │
 │  │  Feynman{Topics,Messages,   │   │                            │  │
 │  │          Problems}          │   │                            │  │
+│  │  AppSetting(键值设置表)     │   │                            │  │
 │  └─────────────────────────────┘   └────────────────────────────┘  │
 │  ┌─ services/ ─────────────────────────────────────────────────┐  │
 │  │  ai_service.py: polish / analyze_jd / generate_learning_guide│  │
@@ -179,16 +185,18 @@ frontend/
 │   │   ├── feynman.ts        ← 费曼房间 / 消息 / 问题
 │   │   ├── quiz.ts           ← Question / QuizSession / GenerateRequest
 │   │   └── mockInterview.ts  ← MockInterview 会话与消息
-│   ├── stores/               ← 7 个 Zustand store
+│   ├── stores/               ← 8 个 Zustand store
 │   │   ├── resumeStore.ts    ← resumes CRUD + templates
 │   │   ├── skillStore.ts     ← skills + jd + resources + Q&A + learningPlan
 │   │   ├── jobStore.ts       ← jobs 缓存 + 刷新 + 过期判断
 │   │   ├── feynmanStore.ts   ← 房间隔离 (rooms: Record<id, RoomState>)
 │   │   ├── quizStore.ts      ← 题目生成 / 场次 / 交卷 / 记录
 │   │   ├── chatStore.ts      ← 问一问房隔离 (rooms: Record<key, RoomState>，key=`{skillId}__{unitKey}`)
-│   │   └── interviewStore.ts ← 模拟面试会话 / 流式作答
+│   │   ├── interviewStore.ts ← 模拟面试会话 / 流式作答
+│   │   └── settingsStore.ts  ← AI 服务配置状态 (地址/key/模型 + 未配置标记)
 │   └── services/
-│       ├── resumeService.ts  ← 区块排序/完成度/gap分析/文本转换/旧格式迁移
+│       ├── resumeService.ts  ← 区块排序/完成度/gap分析/文本转换/旧格式迁移；
+│       │                        区块自定义顺序存在 `sections.__order`（保留键，见 SECTION_ORDER_KEY）
 │       ├── pdfService.ts     ← @react-pdf/renderer 生成 + 下载（简历 + 试题）；CJK 字体注册在此
 │       ├── highlights.ts     ← 划词高亮纯函数 + localStorage 持久化
 │       └── docxService.ts    ← 简历导出 Word：区块→通用块（resumeToDocBlocks，可单测）→ docx 段落
@@ -215,7 +223,7 @@ frontend/
 │   │   ├── ScoreMap.tsx      ← 分数地图（缩进树，底色=分数档 t0-t4；`mode` 切分数/覆盖率）
 │   │   ├── SkillStatusChip.tsx ← 四态状态胶囊（未生成图谱/大部分未测/有缺口/状态可信）
 │   │   └── ElapsedTime.tsx   ← 等待计时器（锚请求发出时刻，每秒自刷「已等待 × 秒」）
-│   ├── pages/                ← 14 个
+│   ├── pages/                ← 15 个
 │   │   ├── ResumeList.tsx / ResumeEditor.tsx (4 tab)
 │   │   ├── JDAnalysis.tsx    ← 文本 / 图片 OCR 双输入 + 「JD 专属题」（含导出复习卷）
 │   │   ├── SkillLibrary.tsx  ← 技能卡片网格 + 分类 + 展开详情（资源/面试题/关联题目）
@@ -225,7 +233,8 @@ frontend/
 │   │   ├── MockInterviewList.tsx / MockInterview.tsx
 │   │   ├── QuizList.tsx / QuizSession.tsx / QuizExam.tsx
 │   │   ├── QuizRecords.tsx / QuizRecordDetail.tsx
-│   │   └── FeynmanRoomList.tsx / FeynmanRoom.tsx
+│   │   ├── FeynmanRoomList.tsx / FeynmanRoom.tsx
+│   │   └── Settings.tsx      ← 设置页 (AI 服务：地址 / key / 模型 + 测试连接)
 │   └── hooks/
 │       ├── useEntrance.ts    ← 入场动画
 │       └── useHighlights.ts  ← 划词高亮状态 + localStorage 持久化
@@ -234,29 +243,31 @@ frontend/
 │   └── background.js / content.js / popup.{html,js} / styles.css
 │
 ├── src/
-│   ├── App.tsx               ← 路由配置 (BrowserRouter, 16 条)
+│   ├── App.tsx               ← 路由配置 (BrowserRouter, 17 条)
 │   ├── main.tsx              ← 入口
 │   └── index.css             ← Tailwind v4 全局样式
 │
-├── tests/                    ← 单元测试 (vitest, 13 个文件 / 84 用例)
+├── tests/                    ← 单元测试 (vitest, 15 个文件 / 100 用例)
 │   ├── api_client.test.ts / models.test.ts
 │   ├── resume_service.test.ts / docx_service.test.ts
 │   ├── resume_store.test.ts / skill_store.test.ts
 │   ├── job_store.test.ts / feynman_store.test.ts
 │   ├── chat_store.test.ts / highlights.test.ts
 │   ├── knowledge_graph.test.ts / score_map.test.ts
-│   └── elapsed_time.test.ts
+│   ├── elapsed_time.test.ts / onboarding.test.ts
+│   └── settings_store.test.ts
 │
-└── e2e/                      ← 端到端测试 (Playwright, 4 spec / 10 test)
+└── e2e/                      ← 端到端测试 (Playwright, 5 spec / 12 test)
     ├── navigation.spec.ts    ← ⚠️ 名为 all pages，实际只覆盖 3 页
     ├── resume.spec.ts
     ├── skills.spec.ts
-    └── jd-analysis.spec.ts
+    ├── jd-analysis.spec.ts
+    └── onboarding.spec.ts
 ```
 
 ### API 路由总览
 
-**48 条路径 / 67 个 endpoint**（以实跑 `/openapi.json` 为准）。
+**51 条路径 / 70 个 endpoint**（以实跑 `/openapi.json` 为准）。
 
 ```
 GET    /health                          → 健康检查
@@ -356,6 +367,13 @@ POST   /api/feynman/topics/:id/report   → 生成 PPT 学习报告（python-ppt
 DELETE /api/feynman/topics/:id          → 删除房间
 POST   /api/feynman/topics/:id/problems         → 手动添加问题（open）
 PUT    /api/feynman/topics/:id/problems/:pid    → 标记解决 / 重开 {status}
+
+# 设置（AI 服务配置）
+GET    /api/settings                  → 配置状态（key 只回掩码尾巴 + 来源；地址/模型回生效值）
+PUT    /api/settings/ai-config        → 改 地址 / key / 模型。三态：省略=不动 / 空串=清除回落 .env / 非空=设置
+                                        写入即热生效（落运行时 settings + 清 AI client 缓存，不重启）
+POST   /api/settings/ai-config/test   → 连通性测试 = GET {base}/models（200 有效 / 401 无效，
+                                        不发消息不烧 token）+ 回可用模型 id 列表（前端 datalist 建议）
 ```
 
 ### 数据流
@@ -385,7 +403,7 @@ PUT    /api/feynman/topics/:id/problems/:pid    → 标记解决 / 重开 {statu
 
 | 表 | 字段 | 说明 |
 |---|---|---|
-| **resumes** | id, title, template_id, sections(JSON), target_company, target_position, created_at, updated_at | 简历主体 |
+| **resumes** | id, title, template_id, sections(JSON), target_company, target_position, created_at, updated_at | 简历主体。`sections` 里的 **`__order` 是保留键**（不是区块类型）：用户上/下移区块后的自定义顺序；后端把它当不透明 JSON 原样存取，只有前端 `resumeService.ts` 解释它 |
 | **templates** | id, name, description, structure(JSON), is_default, created_at | 3 套种子模板 |
 | **jd_analyses** | id, company, position, jd_text, tech_stack(JSON), analysis_result(JSON), resume_id(FK), created_at | JD 分析记录 |
 | **skills** | id, name, category, proficiency(0-100, **nullable; NULL=未验证**), source, notes, learned_at, created_at, learning_plan, knowledge_graph(JSON, **nullable; NULL=未生成图谱**) | 技能库。`has_graph` 是模型上的 property，只暴露布尔不给树。**`learning_plan` 由图谱切分得出**（steps 带 `node_ids` 指向顶层节点，每节点恰好被覆盖一次），无图谱时 `POST /learning-plan` 返回 409。**分数不落库**：`GET /graph` 时用 `services/scoring.py` 从答题记录现算（`scores: {节点id: {score, answered, own}}`，未测 null；`answered` 含子树、`own` 只数直接证据 —— **覆盖率用 own**）。列表接口再聚合一层 `graph_summary`（覆盖率/知识点数/层数/单元数/最低块）给卡片正面 |
@@ -401,6 +419,7 @@ PUT    /api/feynman/topics/:id/problems/:pid    → 标记解决 / 重开 {statu
 | **feynman_topics** | id, skill_id(FK), name, level(1-5), status, breadth_left(2), depth_left(2), learning_summary(JSON), weak_points(JSON), knowledge_points(JSON), covered_points(JSON), created_at, updated_at | 费曼教学房间（每主题一个）。`knowledge_points` = `[{id,title}]` 点单（建房间时从技能图谱顶层节点冻结，空 = 没图谱走旧判级）、`covered_points` = 累计讲对的点 id（等级由它算，D12） |
 | **feynman_messages** | id, topic_id(FK), role, content, level(AI消息带), action, created_at | 费曼教学对话消息 |
 | **feynman_problems** | id, topic_id(FK, CASCADE), content, source(默认 manual), status(open/resolved), created_at, resolved_at(nullable) | 费曼问题跟踪（仅手动添加，AI 只在回复提示） |
+| **app_settings** | key(主键), value, updated_at | 应用级键值设置（一行一个 key，照 Open WebUI 的 config 表）。目前放 `ai_api_key` / `ai_base_url` / `ai_model`：**DB 覆盖 .env、.env 兜底**，启动时 lifespan 装载。**明文存**（单机应用、与 .env 同机同权限、都不进 git；at-rest 加密等有鉴权（SECURITY.md P1）后再说）——但 **key 明文永不回前端**，GET 只回掩码尾巴 |
 
 ## 设计原则
 
@@ -525,7 +544,7 @@ require("fontkit").openSync("frontend/public/fonts/NotoSansSC-Regular.woff").has
 
 ## 测试体系
 
-详见 `tests/TEST_PLAN.md`。当前 **243 tests**（后端 149 + 前端 84 + E2E 10 ✅）。
+详见 `tests/TEST_PLAN.md`。当前 **274 tests**（后端 162 + 前端 100 + E2E 12 ✅）。
 
 **覆盖盲区（已知，待补）**：
 - 后端 `quiz.py` 的 sessions CRUD（创建/列表/详情，交卷由 TC-SCORE 覆盖）、`mock_interview.py` 全部 6 个 endpoint **零测试**（quiz 的 generate / 按 skill_id 筛题 / submit 已由 TC-SCORE-007~012 / TC-JD-009 覆盖）
@@ -586,7 +605,7 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 
 - **当前阶段**：Phase 9 已完成，进入**收尾/加固期**（修 bug + 补测试 + 清死代码）
 - **开发模式**：TDD
-- **上次开发讨论**：2026-10-10
+- **上次开发讨论**：2026-10-13
 - **技能模块设计纪要**：`design/2026-10-03 技能模块设计纪要.md`（分数机制定稿 / 页面架构 / 16 条遗留 / 9 步实施顺序，**①②③④⑥⑦⑧ 已完成**；⑤ 笔记复盘于 2026-10-10 被「问一问」取代；⑨ 仪表盘待做）
 - **技能模块待决策清单**：`design/2026-10-03 技能模块待决策清单.md`（D1–D15 + A1–A8；**D1 / D9 / D12 已落地，D8 前提有误已更正**）
 - **问一问与等待感知会议记录**：`design/2026-10-10 问一问与等待感知 会议记录.md`（问一问定稿 / 删复盘端点 / 状态流取消改真实计时器；**等待计时器 ✅ / 问一问 ✅（复盘端点全家已删；题库的 grade_essay_answer 是另一条线，不受影响）**）
@@ -596,10 +615,10 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 
 | 模块 | 进度 | 测试 |
 |------|------|------|
-| **后端 API** | 100% | 149/149 ✅ |
-| **前端 core 层** | 100% | 84/84 ✅ |
+| **后端 API** | 100% | 162/162 ✅ |
+| **前端 core 层** | 100% | 96/96 ✅ |
 | **前端 UI 层** | 100% | — |
-| **E2E 测试** | 部分 | 10/10 ✅（仅覆盖 3/6 导航） |
+| **E2E 测试** | 部分 | 11/11 ✅（仅覆盖 3/6 导航） |
 | **部署 (Docker)** | 100% | — |
 | **BOSS 直聘集成** | 100% | — |
 | **模拟面试对话** | 100% 功能 / 0% 测试 | ❌ 6 个 endpoint 无测试 |
@@ -735,14 +754,14 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 | **Phase 8** | 费曼教学 · 数字学生（五级理解状态机 + SSE 流式对话 + 提问预算 + PPT 报告） | ✅ |
 | **Phase 9** | 多 Agent 评审管线（讲师+模拟用户双评审 + 棘轮重试，覆盖 3 个教学函数）+ 全量删除复习板块 | ✅ |
 | **Phase 10** | 面试题库（AI 出题 + 刷题/考试双模式 + 45 分钟倒计时 + AI 判卷 + 答题记录）· JD 图片 OCR · JD by-url / from-boss | ✅ |
-| **Phase 11** | 收尾加固：修 5 个静默失败 bug ✅ + 面试题 PDF 导出 ✅（5/5 ✅）+ 清死代码/技术债 ✅ + 技能模块 ⑦⑧ 收尾（工作台 + 卡片正面聚合）✅ + JD↔题打通 ✅ + 费曼判级改覆盖度（D12）✅ + 等待感知计时器（ElapsedTime）✅ + 问一问（笔记复盘 → 每单元对话，复盘端点全家已删）✅ + 补 quiz/mock-interview 测试 ⬜（用户暂缓） | 🚧 进行中 |
+| **Phase 11** | 收尾加固：修 5 个静默失败 bug ✅ + 面试题 PDF 导出 ✅（5/5 ✅）+ 清死代码/技术债 ✅ + 技能模块 ⑦⑧ 收尾（工作台 + 卡片正面聚合）✅ + JD↔题打通 ✅ + 费曼判级改覆盖度（D12）✅ + 等待感知计时器（ElapsedTime）✅ + 问一问（笔记复盘 → 每单元对话，复盘端点全家已删）✅ + 简历区块上/下移（`sections.__order`）✅ + AI 服务设置页（地址/key/模型 可配 + 连通性测试 + 模型名收敛到单点）✅ + 首访聚光灯导览（driver.js 一次性；data-tour 锚点；无 checklist / 无问号重开）✅ + 设置页去技术化文案 + 模型建议改显式列表（`<datalist>` 被 Chrome 按输入值过滤，点开恒为空）✅ + 补 quiz/mock-interview 测试 ⬜（用户暂缓） | 🚧 进行中 |
 
 ### 文件清单
 
 **后端 (10 个核心文件)**
-- `backend/app/main.py` — FastAPI 入口，**10 个 router 挂载**
-- `backend/app/api/` — **10 个路由模块** (health/resumes/templates/jd_analysis/skills/ai/jobs/quiz/mock_interview/feynman)
-- `backend/app/models/` — **14 张 SQLAlchemy 表** (resume/template/jd_analysis/skill 4 张/job/quiz 3 张/mock_interview 2 张/feynman 3 张)
+- `backend/app/main.py` — FastAPI 入口，**11 个 router 挂载**
+- `backend/app/api/` — **11 个路由模块** (health/resumes/templates/jd_analysis/skills/ai/jobs/quiz/mock_interview/feynman/settings)
+- `backend/app/models/` — **15 张 SQLAlchemy 表** (resume/template/jd_analysis/skill 4 张/job/quiz 3 张/mock_interview 2 张/feynman 3 张/setting 1 张)
 - `backend/app/schemas/` — 7 个 Pydantic schema 模块
 - `backend/app/services/ai_service.py` — DeepSeek API (润色/分析/出题/面试/讲解/OCR) + 多 Agent 评审管线（Agent 基类 + 资深讲师/模拟用户评审 + review_pipeline 棘轮循环）
 - `backend/app/services/job_service.py` — DeepSeek 联网搜索岗位 (web_search_20250305 工具 + 结构化解析)
@@ -753,23 +772,23 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 - `backend/app/seed.py` — 3 套模板种子数据
 - `backend/app/config.py` — Settings (DB/DeepSeek/CORS)
 
-**前端 core 层 (14 个核心文件)**
+**前端 core 层 (15 个核心文件)**
 - `frontend/core/api/` — HttpClient 接口 + FetchHttpClient 实现
 - `frontend/core/models/` — 9 个模块 (resume/section/template/skill/jd/job/feynman/quiz/mockInterview)
-- `frontend/core/stores/` — **7 个 Zustand store** (resumeStore / skillStore / jobStore / feynmanStore / quizStore / chatStore / interviewStore)
-- `frontend/core/services/` — 4 个服务 (resumeService / pdfService / docxService / highlights)
+- `frontend/core/stores/` — **8 个 Zustand store** (resumeStore / skillStore / jobStore / feynmanStore / quizStore / chatStore / interviewStore / settingsStore)
+- `frontend/core/services/` — 5 个服务 (resumeService / pdfService / docxService / highlights / onboarding)
 
-**前端 UI 层 (32 个核心文件)**
-- `frontend/web/components/` — **22 个** (Layout / SectionForm / ResumePDF / QuizPDF / JDMatchTab / JobRecommend / JobDetailModal / HighlightableMarkdown / LearningPanel / FloatingNote / QuestionCard / VoiceRecorder / AIErrorBox / ConfirmDialog / AnimatedNumber / LoadingDots / EmptyIcons / LevelBadge / KnowledgeGraph / ScoreMap / SkillStatusChip / ElapsedTime)
-- `frontend/web/pages/` — **14 个** (ResumeList / ResumeEditor / JDAnalysis / SkillLibrary / SkillWorkbench / MockInterviewList / MockInterview / QuizList / QuizSession / QuizExam / QuizRecords / QuizRecordDetail / FeynmanRoomList / FeynmanRoom)
+**前端 UI 层 (34 个核心文件)**
+- `frontend/web/components/` — **23 个** (Layout / SectionForm / ResumePDF / QuizPDF / JDMatchTab / JobRecommend / JobDetailModal / HighlightableMarkdown / LearningPanel / FloatingNote / QuestionCard / VoiceRecorder / AIErrorBox / ConfirmDialog / AnimatedNumber / LoadingDots / EmptyIcons / LevelBadge / KnowledgeGraph / ScoreMap / SkillStatusChip / ElapsedTime / AppTour)
+- `frontend/web/pages/` — **15 个** (ResumeList / ResumeEditor / JDAnalysis / SkillLibrary / SkillWorkbench / MockInterviewList / MockInterview / QuizList / QuizSession / QuizExam / QuizRecords / QuizRecordDetail / FeynmanRoomList / FeynmanRoom / Settings)
 - `frontend/web/hooks/` — useEntrance / useHighlights
 - `frontend/boss-extension/` — BOSS 直聘 Chrome 扩展 (manifest v3)
-- `frontend/src/` — App.tsx (路由, 16 条) / main.tsx (入口)
+- `frontend/src/` — App.tsx (路由, 17 条) / main.tsx (入口)
 
-**测试 (31 个文件)**
-- `backend/tests/` — 15 个文件 (conftest + 13 个测试模块：health/resumes/templates/skills/jd_analysis/jobs/feynman/feynman_problems/review_pipeline/ai_audit/knowledge_graph/scoring + test_skill_chat 的 TC-CHAT 系列 + TC-PLAN 系列)
-- `frontend/tests/` — 13 个 vitest 测试文件 (api_client/models/resume_service/resume_store/skill_store/job_store/feynman_store/chat_store/highlights/knowledge_graph/score_map/elapsed_time/docx_service)
-- `frontend/e2e/` — 4 个 Playwright 规范 (10 个 test)
+**测试 (34 个文件)**
+- `backend/tests/` — 16 个文件 (conftest + 14 个测试模块：health/resumes/templates/skills/jd_analysis/jobs/feynman/feynman_problems/review_pipeline/ai_audit/knowledge_graph/scoring/settings + test_skill_chat 的 TC-CHAT 系列 + TC-PLAN 系列)
+- `frontend/tests/` — 15 个 vitest 测试文件 (api_client/models/resume_service/resume_store/skill_store/job_store/feynman_store/chat_store/settings_store/highlights/knowledge_graph/score_map/elapsed_time/docx_service/onboarding)
+- `frontend/e2e/` — 5 个 Playwright 规范 (12 个 test)
 
 ## Docker 部署
 
