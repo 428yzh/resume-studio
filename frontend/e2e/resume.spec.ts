@@ -51,9 +51,15 @@ test.describe("Resume CRUD", () => {
     const card = page.locator(`//h3[contains(text(),"${title}")]/../..`);
     await expect(card).toBeVisible({ timeout: 5000 });
 
-    // Delete via UI（需确认弹窗）
+    // Delete via UI（需确认弹窗）。等 DELETE 真的返回，别只断言卡片没了 ——
+    // 卡片可能只是重渲染瞬间不在，断言立刻通过、用例结束，在途请求被掐断，数据留在库里
+    const deleted = page.waitForResponse(
+      (r) => r.url().includes(`/api/resumes/${resume.id}`) && r.request().method() === "DELETE",
+      { timeout: 5000 },
+    );
     await card.getByRole("button", { name: "删除" }).click({ force: true });
     await page.getByRole("button", { name: "确认删除" }).click();
+    expect((await deleted).status()).toBe(204);
     await expect(card).not.toBeVisible({ timeout: 5000 });
 
     // API cleanup: remove from tracking since UI delete succeeded
