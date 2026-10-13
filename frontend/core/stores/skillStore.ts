@@ -23,6 +23,8 @@ interface SkillState {
   learningPlan: LearningPlan | null;
   learningPlanSkillId: number | null; // learningPlan 属于哪个技能，防止跨技能串用
   loadingPlan: boolean;
+  /** 生成学习计划的开始时刻（等待计时器锚点：锚请求发出，不锚组件挂载） */
+  planStartedAt: number | null;
   knowledgeGraph: KnowledgeGraph | null;
   graphSkillId: number | null; // knowledgeGraph 属于哪个技能：展开 A 再展开 B，不能再拿 A 的树渲染 B
   loadingGraph: boolean;
@@ -68,6 +70,7 @@ export const useSkillStore = create<SkillState>((set) => ({
   learningPlan: null,
   learningPlanSkillId: null,
   loadingPlan: false,
+  planStartedAt: null,
   knowledgeGraph: null,
   graphSkillId: null,
   loadingGraph: false,
@@ -283,7 +286,7 @@ export const useSkillStore = create<SkillState>((set) => ({
 
   generateLearningPlan: async (skillId: number, requiredLevel: string, priorUnderstanding = "") => {
     if (useSkillStore.getState().loadingPlan) return; // 已在生成，防收起重开后的重复触发
-    set({ loadingPlan: true, error: null });
+    set({ loadingPlan: true, planStartedAt: Date.now(), error: null });
     try {
       const plan = await api.post<LearningPlan>(`/api/skills/${skillId}/learning-plan`, {
         required_level: requiredLevel,
