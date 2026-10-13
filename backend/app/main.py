@@ -15,6 +15,7 @@ from app.api.jobs import router as jobs_router
 from app.api.quiz import router as quiz_router
 from app.api.mock_interview import router as mock_interview_router
 from app.api.feynman import router as feynman_router
+from app.api.settings import router as settings_router, load_ai_overrides
 
 # app.* 下的 logger.info（如 AI 评审打点 `[评审临时]`）默认没有 handler，INFO 会被静默丢弃。
 # 这里给 app logger 挂上 stderr handler，让打点日志打到 uvicorn 终端。
@@ -27,6 +28,7 @@ if not _ai_logger.handlers:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await load_ai_overrides()  # 界面里配过的 key/地址/模型覆盖 .env；表由 init_db 刚建好
     yield
 
 
@@ -50,6 +52,7 @@ app.include_router(jobs_router)
 app.include_router(quiz_router)
 app.include_router(mock_interview_router)
 app.include_router(feynman_router)
+app.include_router(settings_router)
 
 
 if __name__ == "__main__":

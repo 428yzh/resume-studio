@@ -97,7 +97,7 @@ async def search_jobs(query: str) -> list[dict]:
                 f"{base}/anthropic/v1/messages",
                 headers={"x-api-key": settings.deepseek_api_key, "content-type": "application/json"},
                 json={
-                    "model": "deepseek-v4-flash",
+                    "model": settings.deepseek_model,
                     "max_tokens": 3000,
                     "messages": [
                         {"role": "system", "content": SEARCH_SYSTEM_PROMPT},

@@ -33,6 +33,12 @@ def _get_client() -> Optional[AsyncOpenAI]:
     return _client
 
 
+def reset_client() -> None:
+    """设置页换 key 后清缓存：_client 是懒加载单例，不清就一直用旧 key。"""
+    global _client
+    _client = None
+
+
 # ─── 单点补丁：统一审计 + 防注入（L1 声明/定界符 + L2 注入检测） ──
 # 包装 chat.completions.create：feynman.py 也走 _get_client()，自动被覆盖；
 # 未来新增 AI 调用自动受保护，无需改调用点。_original_create 由 _patch_audit 捕获。
@@ -175,7 +181,7 @@ class Agent:
         if not client:
             return ""
         kwargs: dict = {
-            "model": "deepseek-v4-flash",
+            "model": settings.deepseek_model,
             "messages": [
                 {"role": "system", "content": self._system(request or {})},
                 {"role": "user", "content": user_msg},
@@ -431,7 +437,7 @@ async def polish_resume(section_title: str, content: str, target_position: str =
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -466,7 +472,7 @@ async def polish_resume_stream(
 
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -508,7 +514,7 @@ async def analyze_jd(jd_text: str) -> dict:
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"职位描述：\n{jd_text}"},
@@ -603,7 +609,7 @@ async def generate_cornell_prompts(
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"技能/领域：{skill_name}\n学习步骤：{step_title}\n涉及知识点：{topics_str}"},
@@ -973,7 +979,7 @@ async def explain_topic(
                     search_query = f"{skill_name} {search_target} 学习资源"
                     env = os.environ.copy()
                     env["DEEPSEEK_API_KEY"] = settings.deepseek_api_key
-                    env["WEBSEARCH_MODEL"] = "deepseek-v4-flash"
+                    env["WEBSEARCH_MODEL"] = settings.deepseek_model
                     proc = await asyncio.wait_for(
                         asyncio.get_event_loop().run_in_executor(
                             None,
@@ -1033,7 +1039,7 @@ async def explain_topic(
 
             # 推理模型预算太少会全烧在思考上返回空（实测 800→finish=length 空内容），与 explain_topic 同源。提到 4096。
             resource_resp = await client.chat.completions.create(
-                model="deepseek-v4-flash",
+                model=settings.deepseek_model,
                 messages=[{"role": "system", "content": resource_prompt}, {"role": "user", "content": "请推荐。"}],
                 temperature=0.2,
                 max_tokens=8192,
@@ -1045,7 +1051,7 @@ async def explain_topic(
             if not raw.strip() or resource_resp.choices[0].finish_reason == "length":
                 logger.warning(f"资源推荐返回空/截断(finish={resource_resp.choices[0].finish_reason})，重试一次")
                 resource_resp = await client.chat.completions.create(
-                    model="deepseek-v4-flash",
+                    model=settings.deepseek_model,
                     messages=[{"role": "system", "content": resource_prompt}, {"role": "user", "content": "请推荐。"}],
                     temperature=0.2,
                     max_tokens=8192,
@@ -1380,7 +1386,7 @@ async def parse_resume_from_text(text: str) -> dict:
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -1473,7 +1479,7 @@ async def generate_quiz_questions(
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -1567,7 +1573,7 @@ async def notes_chat_stream(
 
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[{"role": "system", "content": system_prompt}, *history],
             temperature=0.7,
             # 推理模型的思考也吃预算：2000 会被烧穿返回空（2026-10-10 实证），直接给 4096
@@ -1607,7 +1613,7 @@ async def grade_essay_answer(question: str, user_answer: str, reference_answer: 
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -1822,7 +1828,7 @@ async def mock_interview_stream(
 
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 *chat_history,
@@ -1867,7 +1873,7 @@ async def evaluate_mock_answer(question: str, user_answer: str, position: str) -
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -1912,7 +1918,7 @@ async def generate_interview_feedback(position: str, company: str, messages: lis
 
     try:
         response = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

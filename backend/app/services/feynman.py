@@ -21,6 +21,7 @@ import logging
 
 from typing import AsyncGenerator
 
+from app.config import settings
 from app.services.ai_service import _get_client
 
 logger = logging.getLogger(__name__)
@@ -175,7 +176,7 @@ async def _chat_json(prompt: str, history: list[dict], *, max_tokens: int, tempe
     for attempt in range(3):
         try:
             resp = await client.chat.completions.create(
-                model="deepseek-v4-flash",
+                model=settings.deepseek_model,
                 messages=[{"role": "system", "content": prompt}, *history],
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -359,7 +360,7 @@ async def feynman_tutor_stream(name: str, messages: list[dict], level: int, acti
 直接输出你的回复正文，不要加 JSON 包装，不要重复你的等级编号。"""
     try:
         stream = await client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=settings.deepseek_model,
             messages=[{"role": "system", "content": system_prompt}, *history],
             temperature=0.7,
             max_tokens=8192,  # 推理模型思考吃 token，给足避免话没说完被截断
@@ -416,7 +417,7 @@ async def generate_report_slides(
     for attempt in range(2):
         try:
             resp = await client.chat.completions.create(
-                model="deepseek-v4-flash",
+                model=settings.deepseek_model,
                 messages=[{"role": "system", "content": prompt}, *history],
                 temperature=0.5,
                 max_tokens=3000,

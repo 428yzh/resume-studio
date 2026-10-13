@@ -14,6 +14,7 @@ import MockInterviewList from "@web/pages/MockInterviewList";
 import MockInterview from "@web/pages/MockInterview";
 import FeynmanRoomList from "@web/pages/FeynmanRoomList";
 import FeynmanRoom from "@web/pages/FeynmanRoom";
+import Settings from "@web/pages/Settings";
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/feynman" element={<FeynmanRoomList />} />
         <Route path="/feynman/new" element={<FeynmanRoomList />} />
         <Route path="/feynman/:id" element={<FeynmanRoom />} />
+        <Route path="/settings" element={<Settings />} />
       </Routes>
     </Layout>
   );

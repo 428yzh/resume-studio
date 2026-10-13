@@ -40,6 +40,7 @@ async def init_db():
         from app.models.quiz import Question, QuizSession, QuizAnswer  # noqa
         from app.models.mock_interview import MockInterview, MockInterviewMessage  # noqa
         from app.models.feynman import FeynmanTopic, FeynmanMessage, FeynmanProblem  # noqa
+        from app.models.setting import AppSetting  # noqa
         await conn.run_sync(Base.metadata.create_all)
 
         # Migrate: add new columns to mock_interviews if missing
