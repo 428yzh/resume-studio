@@ -41,6 +41,10 @@ export interface QuizSessionDetail extends QuizSession {
 export interface GenerateRequest {
   mode: "practice" | "exam";
   skill_ids?: number[];
+  /** 单元级出题：块来自这个技能的图谱（配 node_ids 用，服务端只认这对组合） */
+  skill_id?: number;
+  /** 单元块 = 这几个图谱节点（含子树）。每题会挂回块里的一个 node_id，答完分数落回节点 */
+  node_ids?: string[];
   jd_analysis_id?: number;
   counts?: { single_choice?: number; multi_choice?: number; essay?: number };
 }

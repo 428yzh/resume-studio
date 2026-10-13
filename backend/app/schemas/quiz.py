@@ -10,6 +10,7 @@ class QuestionResponse(BaseModel):
     options: list | str
     correct_answer: str
     skill_ids: list | str
+    node_id: str = ""  # 图谱节点 id，空 = 没挂节点（不计分）
     jd_analysis_id: Optional[int] = None
     created_at: datetime
 
@@ -19,6 +20,8 @@ class QuestionResponse(BaseModel):
 class GenerateQuestionsRequest(BaseModel):
     mode: str = "practice"  # practice / exam
     skill_ids: list[int] = []
+    skill_id: Optional[int] = None  # 单元级出题：块来自这个技能的图谱
+    node_ids: list[str] = []        # 块 = 这几个节点（含子树），题挂回的落分点也在这里面
     jd_analysis_id: Optional[int] = None
     counts: dict = {"single_choice": 5, "multi_choice": 5, "essay": 2}
 

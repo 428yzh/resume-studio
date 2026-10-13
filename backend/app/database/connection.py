@@ -70,3 +70,9 @@ async def init_db():
             ))
         except OperationalError:
             pass  # column already exists
+        try:
+            await conn.execute(text(
+                "ALTER TABLE questions ADD COLUMN node_id VARCHAR(20) DEFAULT ''"
+            ))
+        except OperationalError:
+            pass  # column already exists

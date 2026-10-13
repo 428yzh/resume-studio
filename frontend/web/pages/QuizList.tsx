@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuizStore } from "@core/stores/quizStore";
 import { useSkillStore } from "@core/stores/skillStore";
 import type { Skill } from "@core/models/skill";
@@ -15,16 +15,26 @@ const COUNT_OPTIONS = [
 
 export default function QuizList() {
   const navigate = useNavigate();
-  const { skills, fetchSkills } = useSkillStore();
+  const [searchParams] = useSearchParams();
+  const { skills, fetchSkills, analyses, fetchAnalyses } = useSkillStore();
   const { generateQuestions, createSession, loading, error } = useQuizStore();
   const { mounted } = useEntrance();
 
   const [mode, setMode] = useState<"practice" | "exam">("practice");
-  const [selectedSkills, setSelectedSkills] = useState<number[]>([]);
+  // ?skill= / ?jd= 预选：技能工作台和 JD 详情「去出题」跳过来时带上语境（结论 26：从详情发起）
+  const [selectedSkills, setSelectedSkills] = useState<number[]>(() => {
+    const s = Number(searchParams.get("skill"));
+    return Number.isFinite(s) && s > 0 ? [s] : [];
+  });
+  const [selectedJd, setSelectedJd] = useState<number | null>(() => {
+    const j = Number(searchParams.get("jd"));
+    return Number.isFinite(j) && j > 0 ? j : null;
+  });
   const [counts, setCounts] = useState({ single_choice: 5, multi_choice: 5, essay: 2 });
 
   useEffect(() => {
     fetchSkills();
+    fetchAnalyses();
   }, []);
 
   const toggleSkill = (id: number) => {
@@ -38,6 +48,7 @@ export default function QuizList() {
       const questions = await generateQuestions({
         mode: "practice",
         skill_ids: selectedSkills.length > 0 ? selectedSkills : undefined,
+        jd_analysis_id: selectedJd ?? undefined,
         counts,
       });
       if (questions.length > 0) {
@@ -133,6 +144,27 @@ export default function QuizList() {
                   </button>
                 ))}
               </div>
+            )}
+          </div>
+
+          {/* JD context (optional) */}
+          <div className="bg-canvas rounded-xl border border-hairline p-5 transition-all duration-200 hover:border-blue/20" style={entrance(mounted, 0.12)}>
+            <h3 className="text-sm font-semibold text-ink mb-1">关联 JD（选填）</h3>
+            <p className="text-xs text-muted mb-3">出题会带上这份 JD 的岗位与技术栈语境，题目在 JD 详情里可复查。</p>
+            <select
+              value={selectedJd ?? ""}
+              onChange={(e) => setSelectedJd(e.target.value ? Number(e.target.value) : null)}
+              className="w-full border border-hairline rounded-lg px-3 py-2 text-sm bg-canvas outline-none focus:border-blue"
+            >
+              <option value="">不关联</option>
+              {analyses.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {[a.company, a.position].filter(Boolean).join(" · ") || a.title || `分析 #${a.id}`}
+                </option>
+              ))}
+            </select>
+            {analyses.length === 0 && (
+              <p className="text-xs text-muted mt-2">还没有 JD 分析记录，去「JD 分析」导入一份。</p>
             )}
           </div>
 

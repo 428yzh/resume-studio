@@ -1173,6 +1173,18 @@ def _render_graph_for_prompt(nodes: list, depth: int = 0) -> str:
     return "\n".join(lines)
 
 
+def _all_ids(nodes: list) -> set[str]:
+    """图谱里出现过的全部节点 id。复盘缺口只能引用这里的 id，否则 ⑥ 拿它落分会落空。"""
+    out: set[str] = set()
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        if isinstance(n.get("id"), str):
+            out.add(n["id"])
+        out |= _all_ids(n.get("children") or [])
+    return out
+
+
 async def generate_knowledge_graph(skill_name: str, notes: str = "") -> dict:
     """AI 生成技能知识图谱。结构不合格重试一次，仍不合格则接受并标 degraded。
 
@@ -1384,10 +1396,15 @@ async def parse_resume_from_text(text: str) -> dict:
 async def generate_quiz_questions(
     mode: str,
     skill_names: list[str],
-    jd_analysis_id: int | None = None,
+    jd_context: str = "",
     counts: dict | None = None,
+    block_context: str = "",
 ) -> list[dict]:
-    """AI 生成面试题"""
+    """AI 生成面试题。block_context 非空时限定单元块（带 id 的缩进树）。
+
+    有块就要求每题标 node_id —— 这是分数落回图谱的挂点（一个节点答对多少，
+    它就拿多少分）。没块（普通刷题）不要求，node_id 留空、不计分。
+    """
     client = _get_client()
     if not client:
         return _default_quiz_questions(mode, counts)
@@ -1395,6 +1412,13 @@ async def generate_quiz_questions(
     if counts is None:
         counts = {"single_choice": 5, "multi_choice": 5, "essay": 2}
 
+    node_rule = (
+        "- 本次给了「本单元内容边界」（带 id 的缩进列表）：每道题都必须考边界内的知识点，"
+        "并把该题考的节点 id 填进 node_id；id 必须原样照抄列表里的，不许自己编\n"
+        "- 返回格式里每题多一个 \"node_id\" 字段"
+        if block_context else
+        "- 本次没有内容边界：每题 node_id 填空字符串 \"\""
+    )
     system_prompt = f"""你是一位面试出题专家。请生成一套面试题，严格返回 JSON 数组。
 
 要求：
@@ -1402,7 +1426,9 @@ async def generate_quiz_questions(
 - 选择题选项要有迷惑性
 - 问答题附带评分要点作为 correct_answer
 - 每题标注 type (single_choice/multi_choice/essay)
+- 多选题 correct_answer 用英文逗号连接的选项字母（如 "A,C"），不要空格、不要数组、不要中文顿号
 - 技能名可能一词多义（如 harness 既可能是 Agent Harness，也可能是 Harness.io CI/CD）：必须先读技能后面括号里的备注，按备注确定所指的具体技术再出题，不要按字面联想
+{node_rule}
 
 返回格式：
 [
@@ -1410,13 +1436,22 @@ async def generate_quiz_questions(
     "type": "single_choice",
     "question_text": "题目内容",
     "options": [{{"key": "A", "text": "选项A"}}, {{"key": "B", "text": "选项B"}}, {{"key": "C", "text": "选项C"}}, {{"key": "D", "text": "选项D"}}],
-    "correct_answer": "A"
+    "correct_answer": "A",
+    "node_id": "1.2"
+  }},
+  {{
+    "type": "multi_choice",
+    "question_text": "题目内容（多选）",
+    "options": [{{"key": "A", "text": "选项A"}}, {{"key": "B", "text": "选项B"}}, {{"key": "C", "text": "选项C"}}, {{"key": "D", "text": "选项D"}}],
+    "correct_answer": "A,C",
+    "node_id": "1.2"
   }},
   {{
     "type": "essay",
     "question_text": "问答题",
     "options": [],
-    "correct_answer": "评分要点和参考回答"
+    "correct_answer": "评分要点和参考回答",
+    "node_id": "1.2"
   }}
 ]
 
@@ -1426,8 +1461,11 @@ async def generate_quiz_questions(
     if skill_names:
         # 逐行列：每项可能带「分类/说明」，逗号拼一行会糊成一团
         user_prompt += "涉及技能：\n" + "\n".join(f"- {s}" for s in skill_names) + "\n"
-    if jd_analysis_id:
-        user_prompt += f"关联 JD 分析记录 ID：{jd_analysis_id}\n"
+    if block_context:
+        user_prompt += f"本单元内容边界（题只能出在这里面，node_id 只能取这里的 id）：\n{block_context}\n"
+    if jd_context:
+        # 只传 ID 等于没传 —— AI 看不到内容。要传的是岗位 + 技术栈 + JD 原文（调用方拼好）
+        user_prompt += f"目标岗位语境（出题往这个岗位的技术栈上靠）：\n{jd_context}\n"
     user_prompt += "\n请生成题目。"
 
     try:

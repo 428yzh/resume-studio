@@ -64,6 +64,49 @@ class TestJDAnalysis:
         resp = await client.put("/api/jd/analyses/99999", json={"title": "x"})
         assert resp.status_code == 404
 
+    async def test_quiz_generation_carries_jd_context(self, client, monkeypatch):
+        """TC-JD-009: 出题带 jd_analysis_id → prompt 拿到的是 JD 的**内容**（岗位 + 技术栈 + 原文）
+
+        回归：曾经只把 `jd_analysis_id` 这个数字拼进 prompt，AI 看不到任何 JD 内容，
+        「JD 专属题」等于普通题挂了个外键。题目落 jd_analysis_id，JD 详情按它筛题。
+        """
+        async def fake_analyze(jd_text):
+            return {
+                "suggested_title": "LLM 工程师 - 测试公司",
+                "tech_stack": [{"name": "LangChain", "category": "后端", "required_level": "精通", "priority": 1}],
+                "key_requirements": [], "role_summary": "", "experience_years": "3-5年", "education": "本科",
+            }
+
+        monkeypatch.setattr("app.api.jd_analysis.analyze_jd", fake_analyze)
+        jd = (await client.post("/api/jd/analyze", json={
+            "jd_text": "岗位要求：精通 LangChain 与向量检索。",
+            "company": "测试公司", "position": "LLM 工程师",
+        })).json()
+
+        captured = {}
+
+        async def fake_q(mode, skill_names, jd_context="", counts=None, block_context=""):
+            captured["ctx"] = jd_context
+            return [{"type": "single_choice", "question_text": "题", "options": [], "correct_answer": "A", "node_id": ""}]
+
+        monkeypatch.setattr("app.api.quiz.generate_quiz_questions", fake_q)
+        resp = await client.post("/api/questions/generate", json={
+            "mode": "practice", "jd_analysis_id": jd["id"],
+            "counts": {"single_choice": 1, "multi_choice": 0, "essay": 0},
+        })
+        assert resp.status_code == 200
+        q = resp.json()[0]
+        assert q["jd_analysis_id"] == jd["id"]
+        assert "LLM 工程师" in captured["ctx"]
+        assert "LangChain（精通）" in captured["ctx"]
+        assert "精通 LangChain 与向量检索" in captured["ctx"]
+        # JD 详情页「JD 专属题」按它筛
+        by_jd = (await client.get(f"/api/questions?jd_analysis_id={jd['id']}")).json()
+        assert [x["id"] for x in by_jd] == [q["id"]]
+
+        await client.delete(f"/api/questions/{q['id']}")
+        await client.delete(f"/api/jd/analyses/{jd['id']}")
+
     async def test_analyze_image_no_file(self, client):
         """TC-JD-004: POST /api/jd/analyze-image 未上传文件返回 422"""
         resp = await client.post("/api/jd/analyze-image")

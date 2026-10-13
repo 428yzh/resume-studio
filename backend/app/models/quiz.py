@@ -11,8 +11,19 @@ class Question(Base):
     options = Column(Text, default="[]")  # JSON: [{"key": "A", "text": "..."}]
     correct_answer = Column(Text, default="")
     skill_ids = Column(Text, default="[]")  # JSON: [1, 3, 5]
+    node_id = Column(String(20), default="")  # 图谱节点 id，空 = 没挂节点（不计分）
     jd_analysis_id = Column(Integer, ForeignKey("jd_analyses.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+    @property
+    def skill_id_list(self) -> list:
+        """skill_ids 是 Text 列存的 JSON 数组，读出来统一成 list[int]。
+
+        ⚠️ 它是 `[1, 3]`（数字不带引号）—— 用 SQL LIKE '%"1"%' 去查永远匹配不到，
+        要按技能筛题就在 Python 里用这个判断（出题落分、技能面板都靠它）。
+        """
+        import json
+        return json.loads(self.skill_ids) if isinstance(self.skill_ids, str) else (self.skill_ids or [])
 
 
 class QuizSession(Base):

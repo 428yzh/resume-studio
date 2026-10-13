@@ -1,8 +1,12 @@
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useSkillStore } from "@core/stores/skillStore";
 import { SearchIcon } from "@web/components/EmptyIcons";
 import { Trash, Check, X, PencilSimple } from "@phosphor-icons/react";
 import type { JDAnalysis } from "@core/models/jd";
+import type { Question } from "@core/models/quiz";
+import { api } from "@core/api/client";
+import { exportQuestionsToPDF } from "@core/services/pdfService";
 import AIErrorBox from "@web/components/AIErrorBox";
 import { isUnavailable, hasUnavailableField } from "@core/services/aiDegrade";
 import { useEntrance, entrance } from "@web/hooks/useEntrance";
@@ -22,7 +26,10 @@ interface LearningGuide {
 
 export default function JDAnalysis() {
   const { currentAnalysis, analyses, loading, error, analyzeJD, fetchAnalyses, fetchAnalysis, importSkillFromJD } = useSkillStore();
+  const navigate = useNavigate();
   const [importedSkills, setImportedSkills] = useState<Set<string>>(new Set());
+  /** 这份 JD 的专属题（出题时勾了它、题落 jd_analysis_id 的那些） */
+  const [jdQuestions, setJdQuestions] = useState<Question[]>([]);
 
   const [jdText, setJdText] = useState("");
   const [company, setCompany] = useState("");
@@ -77,6 +84,20 @@ export default function JDAnalysis() {
       fetchAnalysis(analyses[0].id);
     }
   }, [analyses.length]);
+
+  // JD 专属题：切分析记录就重拉。直接从接口拿而不是塞 store —— 只有这个页面用
+  const analysisId = currentAnalysis?.id;
+  useEffect(() => {
+    if (!analysisId) {
+      setJdQuestions([]);
+      return;
+    }
+    let alive = true;
+    api.get<Question[]>(`/api/questions?jd_analysis_id=${analysisId}`)
+      .then((qs) => { if (alive) setJdQuestions(qs); })
+      .catch(() => { if (alive) setJdQuestions([]); });
+    return () => { alive = false; };
+  }, [analysisId]);
 
   const handleAnalyze = async () => {
     if (!jdText.trim()) return;
@@ -700,6 +721,58 @@ export default function JDAnalysis() {
                   </ul>
                 </div>
               )}
+
+              {/* JD 专属题：出题表单里勾了这份 JD 的题落这儿（后端按 jd_analysis_id 筛） */}
+              <div className="bg-canvas rounded-xl border border-hairline p-5 transition-all duration-200 hover:border-blue/20" style={entrance(mounted, 0.22)}>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="font-semibold text-sm text-ink">
+                    JD 专属题{jdQuestions.length > 0 && <span className="text-muted font-normal">（{jdQuestions.length}）</span>}
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {jdQuestions.length > 0 && (
+                      <button
+                        onClick={() => exportQuestionsToPDF({
+                          title: `${currentAnalysis.title || "JD"} 复习卷`,
+                          subtitle: [currentAnalysis.company, currentAnalysis.position].filter(Boolean).join(" · "),
+                          questions: jdQuestions,
+                          showAnswers: true,
+                        })}
+                        className="bg-surface text-slate rounded-full px-3 py-1.5 text-xs font-semibold hover:text-ink transition-colors"
+                      >
+                        导出复习卷
+                      </button>
+                    )}
+                    <button
+                      onClick={() => navigate(`/quiz?jd=${currentAnalysis.id}`)}
+                      className="bg-blue-light text-blue rounded-full px-3 py-1.5 text-xs font-semibold hover:bg-blue-light/70 transition-colors"
+                    >
+                      去出题 →
+                    </button>
+                  </div>
+                </div>
+                {jdQuestions.length === 0 ? (
+                  <p className="text-sm text-muted">还没有这份 JD 的题 —— 点「去出题」生成时会带上它的岗位与技术栈语境。</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {jdQuestions.map((q) => (
+                      <li key={q.id} className="border border-hairline rounded-lg px-3 py-2">
+                        <div className="flex items-start gap-2">
+                          <span className="shrink-0 text-[10px] font-semibold rounded-full px-2 py-0.5 bg-surface text-slate mt-0.5">
+                            {q.type === "single_choice" ? "单选" : q.type === "multi_choice" ? "多选" : "问答"}
+                          </span>
+                          <span className="flex-1 text-sm text-charcoal">{q.question_text}</span>
+                        </div>
+                        {q.correct_answer && (
+                          <details className="mt-1.5">
+                            <summary className="text-xs text-muted cursor-pointer hover:text-blue">看答案</summary>
+                            <p className="text-xs text-slate mt-1 whitespace-pre-wrap">{q.correct_answer}</p>
+                          </details>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
 
               {/* Next steps */}
               {currentAnalysis.tech_stack.length > 0 && (
