@@ -180,6 +180,29 @@ export const useFeynmanStore = create<FeynmanState>((set, get) => ({
           }
         }
       }
+
+      // 兜底收尾：流结束了却没收到 done 帧（连接被掐断/帧丢失）也要复位，
+      // 否则该房间永久卡在 isStreaming=true，下一条消息再也发不出去。
+      // done 已处理过时 isStreaming 已是 false，这里跳过；半截回复留成 AI 消息，不丢内容。
+      set((state) => {
+        const r = roomOf(state, topicId);
+        if (!r.isStreaming || !r.topic) return {};
+        const partial: FeynmanMessage = {
+          id: Date.now() + 1,
+          role: "ai",
+          content: aiContent,
+          level: aiLevel,
+          action: aiAction,
+          created_at: new Date().toISOString(),
+        };
+        return patchRoom(state, topicId, {
+          topic: aiContent ? { ...r.topic, messages: [...r.topic.messages, partial] } : r.topic,
+          streamingContent: "",
+          streamingLevel: null,
+          streamingAction: "",
+          isStreaming: false,
+        });
+      });
     } catch (e) {
       set((state) =>
         patchRoom(state, topicId, { isStreaming: false, streamingContent: "", streamingLevel: null, streamingAction: "" })

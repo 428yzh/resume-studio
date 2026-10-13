@@ -548,6 +548,7 @@ async def generate_learning_guide(tech_name: str, category: str, required_level:
         build_msg,
         [(_lecturer, review_ctx), (_sim_user, review_ctx)],
         request=request,
+        max_rounds=1,  # 评审不过 → 带反馈重写一轮（棘轮保证只变好不变差）
         json_mode=True,
         max_tokens=8192,  # 同 learning_plan：默认 1000 推理模型必截断
     )
@@ -945,6 +946,7 @@ async def explain_topic(
             build_msg,
             [(_lecturer, review_ctx), (_sim_user, review_ctx)],
             request=request,
+            max_rounds=1,  # 评审不过 → 带反馈重写一轮（棘轮保证只变好不变差）
             # max_tokens 是上限不是实耗：篇幅由内容取舍行控制（了解 ~1500 字 / 熟悉 ~2500 字 / 精通 ~4000 字），
             # 8192 只保证不截断（4096 实测不够——4000 字内容 + 标题 ≈ 4300+ tokens 会 finish=length → 空返回 → 前端重试）
             max_tokens=8192,
@@ -1289,6 +1291,7 @@ async def generate_learning_plan(
             build_msg,
             [(_lecturer, review_ctx), (_sim_user, review_ctx)],
             request=request,
+            max_rounds=1,  # 评审不过 → 带反馈重写一轮（棘轮保证只变好不变差）
             json_mode=True,
             # 推理模型会把预算先烧在思考上，大技能（6-10 步 JSON）1000 必截断，截断 JSON 解析失败会静默降级
             max_tokens=8192,

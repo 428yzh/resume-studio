@@ -1,7 +1,9 @@
 """多 Agent 评审管线测试
 
-TC-REV 系列：Agent 基类 / 评审 agent 放行 / review_pipeline 协作循环（棘轮回滚）
+TC-REV 系列：Agent 基类 / 评审 agent 放行 / review_pipeline 协作循环（棘轮回滚）/ 生产调用点接线
 """
+import json
+
 import pytest
 
 from app.services import ai_service
@@ -167,6 +169,35 @@ async def test_pipeline_max_rounds_returns_best(monkeypatch):
     )
     assert content == "r2"  # 棘轮下保留 bad 最低的版本
     assert len(gen.calls) == 3  # 跑满 max_rounds+1 后回滚
+
+
+# ─── 生产调用点：反馈重写必须开启 ──────────────────────
+@pytest.mark.asyncio
+async def test_production_generators_enable_feedback_rewrite(monkeypatch):
+    """三个生产生成入口都必须传 max_rounds=1。
+
+    曾经全部没传 —— review_pipeline 默认 0 = 评审不过也不重试，
+    「反馈增量注入重新生成 + 棘轮回滚」在生产从未跑过（只是函数能力）。"""
+    calls: list[tuple[str, object]] = []
+
+    async def fake_pipeline(gen, build_msg, reviewers, **kw):
+        calls.append((gen.name, kw.get("max_rounds")))
+        if gen.name == "学习指引":
+            return json.dumps({"learning_path": [{"step": 1, "title": "入门", "description": "d"}], "interview_questions": []}), []
+        if gen.name == "学习计划":
+            return json.dumps({"steps": [{"step": 1, "title": "单元一", "node_ids": ["1"]}]}), []
+        return "", []  # 知识点讲解：空内容走早退，避开尾部真实资源搜索
+
+    monkeypatch.setattr(ai_service, "review_pipeline", fake_pipeline)
+    monkeypatch.setattr(ai_service, "_get_client", lambda: object())
+
+    await ai_service.generate_learning_guide("React", "前端", "了解")
+    await ai_service.generate_learning_plan(
+        "React", "了解", "", graph=[{"id": "1", "title": "Hooks", "children": []}]
+    )
+    await ai_service.explain_topic("React", step_title="Hooks")
+
+    assert calls == [("学习指引", 1), ("学习计划", 1), ("知识点讲解", 1)]
 
 
 # ─── 改造后的函数：无 API key 走 fallback ───────────────

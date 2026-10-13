@@ -300,3 +300,68 @@ async def test_graph_summary_counts_direct_evidence_only(client, monkeypatch):
     finally:
         await client.delete(f"/api/skills/{skill_id}")
 
+
+@pytest.mark.asyncio
+async def test_essay_grading_failure_stores_null_not_zero(client, monkeypatch):
+    """TC-SCORE-013: 交卷时 AI 评分挂掉 → ai_score 存 null（未测≠0），不是 0 分
+
+    存 0 会让「AI 没评到」冒充「AI 评了 0 分」：结果页显红、图谱分被拉低，全查不出原因。
+    """
+
+    async def fake_essay(mode, skill_names, jd_context="", counts=None, block_context=""):
+        return [{
+            "type": "essay",
+            "question_text": "讲讲浏览器事件循环",
+            "options": [],
+            "correct_answer": "评分要点：宏任务 / 微任务 / 渲染时机",
+            "node_id": "",
+        }]
+
+    async def boom(*a, **kw):
+        raise RuntimeError("DeepSeek 不可用")
+
+    monkeypatch.setattr("app.api.quiz.generate_quiz_questions", fake_essay)
+    monkeypatch.setattr("app.api.quiz.grade_essay_answer", boom)
+
+    qs = (await client.post("/api/questions/generate", json={
+        "mode": "practice", "counts": {"single_choice": 0, "multi_choice": 0, "essay": 1},
+    })).json()
+    qid = qs[0]["id"]
+    sid = (await client.post("/api/quiz/sessions", json={"mode": "practice", "question_ids": [qid]})).json()["id"]
+    resp = await client.post(f"/api/quiz/sessions/{sid}/submit", json={"answers": {str(qid): "我的回答"}})
+    assert resp.status_code == 200
+
+    ans = (await client.get(f"/api/quiz/sessions/{sid}")).json()["answers"][0]
+    assert ans["is_correct"] is None
+    assert ans["ai_score"] is None  # 曾存 0
+    assert ans["ai_feedback"] == "AI 评分暂不可用"
+
+
+@pytest.mark.asyncio
+async def test_multi_choice_grading_tolerates_spaces(client, monkeypatch):
+    """TC-SCORE-014: 多选题 AI 写成 "A, C"（带空格）→ 用户 "C,A" 仍判对
+
+    判分是集合比对，prompt 约束不住生成端时（曾连 multi_choice 的返回示例都没有）空格会
+    让正确答案判错 —— 必须按选项字母归一化后再比。
+    """
+
+    async def fake_multi(mode, skill_names, jd_context="", counts=None, block_context=""):
+        return [{
+            "type": "multi_choice",
+            "question_text": "选出所有正确项",
+            "options": [{"key": "A", "text": "a"}, {"key": "B", "text": "b"}, {"key": "C", "text": "c"}, {"key": "D", "text": "d"}],
+            "correct_answer": "A, C",  # AI 没守「无空格」格式约束
+            "node_id": "",
+        }]
+
+    monkeypatch.setattr("app.api.quiz.generate_quiz_questions", fake_multi)
+
+    qs = (await client.post("/api/questions/generate", json={
+        "mode": "practice", "counts": {"single_choice": 0, "multi_choice": 1, "essay": 0},
+    })).json()
+    qid = qs[0]["id"]
+    sid = (await client.post("/api/quiz/sessions", json={"mode": "practice", "question_ids": [qid]})).json()["id"]
+    await client.post(f"/api/quiz/sessions/{sid}/submit", json={"answers": {str(qid): "C,A"}})
+
+    ans = (await client.get(f"/api/quiz/sessions/{sid}")).json()["answers"][0]
+    assert ans["is_correct"] is True

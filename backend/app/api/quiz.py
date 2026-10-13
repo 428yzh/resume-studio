@@ -322,7 +322,8 @@ async def submit_session(
             correct = question.correct_answer.strip()
             user = user_answer.strip()
             if question.type == "multi_choice":
-                is_correct = set(user.split(",")) == set(correct.split(","))
+                # 容忍 AI 写的 "A, C" 带空格（prompt 已要求无空格，但生成端不保证）
+                is_correct = {a.strip() for a in user.split(",")} == {a.strip() for a in correct.split(",")}
             else:
                 is_correct = user == correct
             if is_correct:
@@ -339,7 +340,8 @@ async def submit_session(
                 ai_reference = grade_result.get("reference", question.correct_answer)
                 total_score += ai_score
             except Exception:
-                ai_score = 0
+                # 评分没跑成 = 未测，不是 0 分（同 proficiency 的 NULL 语义）
+                ai_score = None
                 ai_feedback = "AI 评分暂不可用"
                 ai_reference = question.correct_answer
 

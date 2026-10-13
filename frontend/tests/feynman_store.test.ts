@@ -25,6 +25,8 @@ function makeTopic(over: Partial<FeynmanTopic> = {}): FeynmanTopic {
     depth_left: 2,
     learning_summary: null,
     weak_points: [],
+    knowledge_points: [],
+    covered_points: [],
     problems: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -172,6 +174,23 @@ describe("TC-STORE-FEYN-005: sendMessage SSE 定级流式", () => {
     await useFeynmanStore.getState().sendMessage(1, "测试");
     expect(useFeynmanStore.getState().error).toBeTruthy();
     expect(useFeynmanStore.getState().rooms[1]!.isStreaming).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("流结束却没收到 done 帧：仍收尾（不永久卡流式态），半截回复留成消息", async () => {
+    // 连接被掐断/帧丢失：只有 level + 半截 response，没有 done
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([SSE_LEVEL + SSE_RESP1])));
+    vi.mocked(api.get).mockClear();
+
+    await useFeynmanStore.getState().sendMessage(1, "React Hooks 是管理状态用的。");
+
+    const room = useFeynmanStore.getState().rooms[1]!;
+    expect(room.isStreaming).toBe(false); // 曾永久 true → 下一条消息再也发不出去
+    expect(room.streamingContent).toBe("");
+    const last = room.topic!.messages[room.topic!.messages.length - 1];
+    expect(last.role).toBe("ai");
+    expect(last.content).toBe("我复述一下"); // 半截内容不丢
+    expect(api.get).not.toHaveBeenCalled(); // 没收到 done 就不该 fetchTopic
     vi.unstubAllGlobals();
   });
 
