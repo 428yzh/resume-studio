@@ -4,12 +4,37 @@ import { SECTION_FORM_CONFIGS } from "@core/models/section";
 import type { HeaderData, SummaryData, ExperienceItem, EducationItem, SkillItem, ProjectItem, CertificationItem, LanguageItem } from "@core/models/section";
 import type { JDAnalysis, GapAnalysis } from "@core/models/jd";
 
-/** 合并简历区块与模板结构，返回有序区块列表 */
+/** sections JSON 里存区块自定义顺序的保留键 —— 不是区块类型，别当区块渲染 */
+export const SECTION_ORDER_KEY = "__order";
+
+/** 按保存的顺序排 keys；没排到的（新增区块 / 换了模板）保持原序补在后面 */
+export function orderSectionKeys(keys: string[], order?: unknown): string[] {
+  if (!Array.isArray(order)) return keys;
+  // 过滤掉已删除的区块 / 非字符串，脏数据不能让区块消失
+  const saved = (order as unknown[]).filter((k): k is string => typeof k === "string" && keys.includes(k));
+  return [...saved, ...keys.filter((k) => !saved.includes(k))];
+}
+
+/** 把 key 在顺序里上移/下移一位；首尾越界或 key 不在其中时原样返回 */
+export function moveSectionKey(order: string[], key: string, dir: -1 | 1): string[] {
+  const i = order.indexOf(key);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return order;
+  const next = [...order];
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
+
+/** 合并简历区块与模板结构，返回有序区块列表（用户自定义顺序优先） */
 export function getOrderedSections(resume: Resume, templateSections: { key: string; title: string }[]) {
-  return templateSections.map((sec) => ({
-    key: sec.key,
-    title: sec.title,
-    data: resume.sections[sec.key],
+  const byKey = new Map(templateSections.map((sec) => [sec.key, sec]));
+  return orderSectionKeys(
+    templateSections.map((sec) => sec.key),
+    resume.sections[SECTION_ORDER_KEY],
+  ).map((key) => ({
+    key,
+    title: byKey.get(key)!.title,
+    data: resume.sections[key],
   }));
 }
 

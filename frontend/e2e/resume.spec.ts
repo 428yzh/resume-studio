@@ -5,6 +5,11 @@ const API = "http://localhost:8001";
 test.describe("Resume CRUD", () => {
   const createdIds: number[] = [];
 
+  // 首访导览会在落地页 /resumes 自动弹出并盖住界面，先种上「已看过」标记（导览本身见 onboarding.spec.ts）
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("onboarding__tour_seen", "1"));
+  });
+
   test.afterEach(async () => {
     for (const id of createdIds) {
       try {
@@ -65,5 +70,51 @@ test.describe("Resume CRUD", () => {
     // API cleanup: remove from tracking since UI delete succeeded
     const idx = createdIds.indexOf(resume.id);
     if (idx > -1) createdIds.splice(idx, 1);
+  });
+
+  test("moves a section and persists the new order", async ({ page }) => {
+    const title = `E2E-区块移动-${Date.now()}`;
+
+    const res = await fetch(`${API}/api/resumes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        sections: {
+          header: { name: "E2E", email: "", phone: "", location: "", title: "" },
+          experience: [{ id: "1", company: "A 公司", position: "前端", start_date: "", end_date: "", current: false, description: "d" }],
+          education: [{ id: "2", school: "S 大学", degree: "本科", major: "CS", start_date: "", end_date: "" }],
+        },
+      }),
+    });
+    const resume = await res.json();
+    createdIds.push(resume.id);
+
+    await page.goto(`/resumes/${resume.id}`, { waitUntil: "networkidle" });
+
+    const cardTitles = () => page.locator("label.font-semibold.text-sm.text-ink").allTextContents();
+    await expect(page.locator("label.font-semibold.text-sm.text-ink").first()).toBeVisible({ timeout: 5000 });
+    const before = await cardTitles();
+    const eduAt = before.indexOf("教育背景");
+    expect(before.indexOf("工作经历")).toBeGreaterThan(-1);
+    expect(eduAt).toBe(before.indexOf("工作经历") + 1); // 模板默认：教育背景紧跟工作经历
+
+    // 「教育背景」上移一格（按钮 hover 才显形，同「删除」用 force）
+    const eduCard = page.locator("div.group").filter({ has: page.getByText("教育背景", { exact: true }) }).first();
+    await eduCard.getByRole("button", { name: "上移教育背景" }).click({ force: true });
+    const after = await cardTitles();
+    expect(after.indexOf("教育背景")).toBe(eduAt - 1);
+
+    // 保存 → 刷新后顺序仍在（证明存进了 sections JSON，不是前端临时态）
+    const saved = page.waitForResponse(
+      (r) => r.url().includes(`/api/resumes/${resume.id}`) && r.request().method() === "PUT",
+    );
+    await page.getByRole("button", { name: "保存" }).click();
+    expect((await saved).status()).toBe(200);
+    await expect(page.getByText("保存成功")).toBeVisible({ timeout: 5000 });
+
+    // allTextContents 不等待 —— 刷新后 React 还没渲染就读会读到空数组，用 poll 等它出来
+    await page.reload({ waitUntil: "networkidle" });
+    await expect.poll(() => cardTitles()).toEqual(after);
   });
 });

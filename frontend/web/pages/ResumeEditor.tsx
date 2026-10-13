@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useResumeStore } from "@core/stores/resumeStore";
-import { resumeToPlainText, sectionHasContent } from "@core/services/resumeService";
+import { resumeToPlainText, sectionHasContent, orderSectionKeys, moveSectionKey, SECTION_ORDER_KEY } from "@core/services/resumeService";
 import { exportToPDF } from "@core/services/pdfService";
 import { exportResumeToDocx } from "@core/services/docxService";
 import SectionForm from "@web/components/SectionForm";
@@ -174,21 +174,25 @@ export default function ResumeEditor() {
   const templateSections = template?.structure?.sections || [];
 
   // 模板区块 + 数据里存在但模板未定义区块（如切换到不含 projects 的模板时，
-  // 已有内容不应被藏起来，否则既看不到也无法重新添加）
-  const displaySections = [
+  // 已有内容不应被藏起来，否则既看不到也无法重新添加），最后按用户自定义顺序排
+  const unorderedSections = [
     ...templateSections.map((sec) => ({
       key: sec.key,
       title: sec.title,
       data: sectionContents[sec.key],
     })),
     ...Object.keys(sectionContents)
-      .filter((k) => !templateSections.find((ts) => ts.key === k) && sectionContents[k] !== undefined)
+      .filter((k) => k !== SECTION_ORDER_KEY && !templateSections.find((ts) => ts.key === k) && sectionContents[k] !== undefined)
       .map((k) => ({
         key: k,
         title: AVAILABLE_SECTION_TYPES.find((s) => s.key === k)?.title ?? k,
         data: sectionContents[k],
       })),
   ];
+  const displaySections = orderSectionKeys(
+    unorderedSections.map((s) => s.key),
+    sectionContents[SECTION_ORDER_KEY],
+  ).map((k) => unorderedSections.find((s) => s.key === k)!);
 
   const fullResumeText = useMemo(() => resumeToPlainText(sectionContents), [sectionContents]);
   const filledCount = displaySections.filter((s) => sectionHasContent(s.key, s.data)).length;
@@ -235,6 +239,14 @@ export default function ResumeEditor() {
   const handleAddSection = (key: string) => {
     if (sectionContents[key] !== undefined) return;
     setSectionContents((prev) => ({ ...prev, [key]: createDefaultContent(key) as never }));
+  };
+
+  const handleMoveSection = (key: string, dir: -1 | 1) => {
+    const keys = displaySections.map((s) => s.key);
+    const next = moveSectionKey(keys, key, dir);
+    if (next === keys) return; // 首尾越界
+    setSectionContents((prev) => ({ ...prev, [SECTION_ORDER_KEY]: next }));
+    markDirty();
   };
 
   const handleRemoveSection = (key: string) => {
@@ -595,6 +607,22 @@ export default function ResumeEditor() {
                       )}
                     </div>
                     <div className="flex items-center gap-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleMoveSection(sec.key, -1)}
+                        disabled={i === 0}
+                        aria-label={`上移${sec.title}`}
+                        className="text-xs text-slate/60 hover:text-blue disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        ↑ 上移
+                      </button>
+                      <button
+                        onClick={() => handleMoveSection(sec.key, 1)}
+                        disabled={i === displaySections.length - 1}
+                        aria-label={`下移${sec.title}`}
+                        className="text-xs text-slate/60 hover:text-blue disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        ↓ 下移
+                      </button>
                       {!templateSections.find((s) => s.key === sec.key)?.required && (
                         <button
                           onClick={() => setConfirmDeleteSection({ key: sec.key, title: sec.title })}
