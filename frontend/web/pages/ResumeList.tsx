@@ -84,6 +84,7 @@ export default function ResumeList() {
           </button>
           <button
             onClick={handleCreate}
+            data-tour="create-resume"
             className="bg-blue text-white rounded-full px-5 py-2 font-semibold text-sm hover:bg-blue/90 transition-all active:scale-95"
           >
             + 新建简历

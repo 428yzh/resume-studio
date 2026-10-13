@@ -129,6 +129,42 @@ body {
   transition: stroke-dashoffset 1s ease-out;
 }
 
+/* 首访导览（driver.js）：对齐 Airtable 风格 —— 圆角、发丝边、pill 按钮、蓝主色 */
+.driver-popover.tour-popover {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-hairline);
+  box-shadow: var(--shadow-modal);
+}
+.driver-popover.tour-popover .driver-popover-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-ink);
+}
+.driver-popover.tour-popover .driver-popover-description {
+  font-size: 0.875rem;
+  color: var(--color-slate);
+  line-height: 1.6;
+}
+.driver-popover.tour-popover .driver-popover-progress-text {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+.driver-popover.tour-popover .driver-popover-navigation-btns button {
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 6px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-shadow: none;
+  background: var(--color-surface);
+  color: var(--color-charcoal);
+}
+.driver-popover.tour-popover .driver-popover-navigation-btns button.driver-popover-next-btn,
+.driver-popover.tour-popover .driver-popover-navigation-btns button.driver-popover-done-btn {
+  background: var(--color-blue);
+  color: #fff;
+}
+
 /* AI 内容 markdown 渲染（HighlightableMarkdown 用 dangerouslySetInnerHTML，
    React 不管理内部节点，样式用 CSS 复刻，防止与注入的 <mark> 冲突导致白屏） */
 .markdown-prose h1 {
