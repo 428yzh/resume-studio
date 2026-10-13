@@ -101,7 +101,9 @@ async def test_graph_endpoints_roundtrip(client, monkeypatch):
         assert [n["id"] for n in body["nodes"]] == ["1", "2", "3", "4"]
 
         stored = (await client.get(f"/api/skills/{skill_id}/graph")).json()
-        assert stored == body  # 中文标题也要原样往返，不能被转义坏掉
+        # 图谱部分原样往返（中文标题不能被转义坏掉）；scores 是 GET 现算的，不落库
+        assert {k: stored[k] for k in ("nodes", "degraded", "issues")} == body
+        assert stored["scores"]["1"]["score"] is None  # 没答过题 → 未测，不是 0
 
         assert (await client.get("/api/skills/999999/graph")).status_code == 404
     finally:

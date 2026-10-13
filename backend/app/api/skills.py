@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, delete
@@ -12,6 +13,7 @@ from app.schemas.skill import (
     SkillNoteUpsert, SkillNoteResponse,
 )
 from app.services.ai_service import generate_learning_plan, generate_knowledge_graph
+from app.services.scoring import compute_scores
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -177,15 +179,49 @@ async def delete_question(skill_id: int, question_id: int, db: AsyncSession = De
     await db.commit()
 
 
+async def _node_evidence(db: AsyncSession, skill_id: int) -> dict[str, dict[str, list[int]]]:
+    """刷题/考试这条来源的答题证据：{节点 id: {"quiz": [每题得分]}}。
+
+    分数来自答题记录，不新存一份。重答同一题取最后一次（是「现在会不会」，
+    不是「历史平均」）。加新来源（费曼等级、笔记完成度）时在这里塞新桶，
+    scoring.py 一行不用改。
+    """
+    from app.models.quiz import Question, QuizAnswer
+    rows = (await db.execute(
+        select(Question, QuizAnswer)
+        .join(QuizAnswer, QuizAnswer.question_id == Question.id)
+        .order_by(QuizAnswer.answered_at)
+    )).all()
+
+    latest: dict[int, tuple] = {}
+    for q, a in rows:
+        if skill_id not in q.skill_id_list or not q.node_id:
+            continue
+        latest[q.id] = (q.node_id, a)
+
+    evidence: dict[str, dict[str, list[int]]] = {}
+    for node_id, a in latest.values():
+        score = 100 if a.is_correct else (a.ai_score if a.ai_score is not None else 0)
+        evidence.setdefault(node_id, {}).setdefault("quiz", []).append(score)
+    return evidence
+
+
 @router.get("/{skill_id}/graph")
 async def get_knowledge_graph(skill_id: int, db: AsyncSession = Depends(get_db)):
-    """读取知识图谱。未生成返回 null（卡片据此显示「未生成图谱」）。"""
+    """读取知识图谱 + 分数。未生成返回 null（卡片据此显示「未生成图谱」）。
+
+    scores 是自下而上算的（scoring.py），和覆盖率配对看才有意义：
+    未测不摊进平均，所以「1/4 子节点测过且满分」的单元分也是 100。
+    """
     result = await db.execute(select(Skill).where(Skill.id == skill_id))
     skill = result.scalar_one_or_none()
     if not skill:
         raise HTTPException(status_code=404, detail="技能不存在")
-    import json
-    return json.loads(skill.knowledge_graph) if skill.knowledge_graph else None
+    if not skill.knowledge_graph:
+        return None
+    data = json.loads(skill.knowledge_graph)
+    data["scores"] = compute_scores(data["nodes"], await _node_evidence(db, skill_id))
+    return data
 
 
 @router.post("/{skill_id}/graph")
