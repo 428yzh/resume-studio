@@ -139,6 +139,31 @@ export default function FeynmanRoom() {
         </div>
       </div>
 
+      {/* 知识覆盖条：等级由这些点算（讲对几个涨几档），也是这场教学唯一的正反馈 */}
+      {currentTopic.knowledge_points.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap -mt-2 pb-3">
+          <span className="text-[11px] text-muted flex-shrink-0">
+            知识覆盖 {currentTopic.covered_points.length}/{currentTopic.knowledge_points.length}
+          </span>
+          {currentTopic.knowledge_points.map((p) => {
+            const done = currentTopic.covered_points.includes(p.id);
+            return (
+              <span
+                key={p.id}
+                title={p.title}
+                className={`text-[11px] rounded-full px-2 py-0.5 border max-w-[12rem] truncate ${
+                  done
+                    ? "bg-blue-light text-blue border-blue/20"
+                    : "bg-surface text-muted border-dashed border-hairline"
+                }`}
+              >
+                {done ? "✓" : "○"} {p.title}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* 消息区 */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
         {allMessages.length === 0 && (

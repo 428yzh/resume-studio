@@ -8,8 +8,12 @@
   L4 重构  链条补全                  → restatement      用自己的话完整复述
   L5 辩证  主动找矛盾/边界           → depth_question   深度追问（预算×2）
 
-等级判定 = 模型提议 → clamp_level 单调钳制（只能升、最多 +1）。
+**等级判据 = 知识点覆盖度**（2026-10-04，待决策 D12）：房间从技能图谱的顶层节点取一份
+点单，每轮由 AI 判定「到目前为止讲对了哪些点」（累计集合），等级 = 覆盖率分档。
+覆盖集合没变的轮次等级原地不动 —— 判据落在内容推进上，不在发言轮次上
+（旧实现让 AI 每轮自由提级，实测「用户每说一句就升一级」）。
 提问预算 = L3 广度 ×2、L5 深度 ×2，问一次扣一次。
+没图谱的主题房没有点单 → 退回旧的「AI 提级 + clamp」路径，行为不变。
 """
 import asyncio
 import json
@@ -47,6 +51,41 @@ def clamp_level(proposed: int, current: int) -> int:
     if proposed >= current:
         return min(proposed, current + 1) if current < 5 else 5
     return max(proposed, current - 1)  # 发现理解被推翻 → 允许降一级
+
+
+# ─── 覆盖度判级（D12）：等级 = 讲对了几个知识点，不是说了几句话 ────
+# 分档：0 个 → L1；不到一半 → L2；过半 → L3；多半 → L4；全部 → L5。
+# 阈值只在这张表里（5 个顶层节点时刚好一个点一档）。
+_COVERAGE_BANDS = ((0.5, 2), (0.8, 3), (1.0, 4))
+
+
+def level_from_coverage(covered: int, total: int) -> int:
+    """覆盖率 → 等级档位。没点单（total=0）时返回 1，调用方走旧路径。
+    ⚠️ 与前端「知识覆盖」条的档位是同一套（前端只显示 k/n，不复制阈值）。"""
+    if total <= 0 or covered <= 0:
+        return 1
+    ratio = covered / total
+    for threshold, level in _COVERAGE_BANDS:
+        if ratio < threshold:
+            return level
+    return 5
+
+
+def sanitize_covered(raw, points: list[dict]) -> list[str]:
+    """只认点单里的 id，按点单顺序去重返回。
+
+    跟出题的 node_id 同一条规矩：AI 编的 id 落库后永远匹配不到，界面上的
+    缺口清单会凭空多一条还查不出原因。"""
+    if not isinstance(raw, list):
+        return []
+    hit = {x for x in raw if isinstance(x, str)}
+    return [p["id"] for p in points if p.get("id") in hit]
+
+
+def uncovered_titles(points: list[dict], covered: list[str]) -> list[str]:
+    """没讲到的知识点标题（进 PPT 报告的薄弱点页）"""
+    done = set(covered)
+    return [p["title"] for p in points if p.get("id") not in done]
 
 
 def resolve_action(level: int, proposed_action: str, breadth_left: int, depth_left: int) -> str:
@@ -122,8 +161,38 @@ def _parse_json_defensive(text: str) -> dict:
 
 # ─── 阶段 A：定级（非流式，小调用）─────────────────────────────
 def _assess_fallback(level: int) -> dict:
-    """AI 不可用时保持当前等级，返回兜底动作，不假装理解提升。"""
-    return {"level": level, "action": "ask_example", "blind_spot": "", "error": ""}
+    """AI 不可用时保持当前等级，返回兜底动作，不假装理解提升。degraded 让调用方别当「零卡点」。"""
+    return {"level": level, "action": "ask_example", "blind_spot": "", "error": "", "degraded": True}
+
+
+async def _chat_json(prompt: str, history: list[dict], *, max_tokens: int, temperature: float, label: str) -> dict:
+    """调一次 JSON 模式的小模型调用。解析失败/异常重试 3 次，全失败返回 {}（调用方兜底）。
+
+    DeepSeek 偶发返回空内容，所以重试是必需品，不是防御性代码。"""
+    client = _get_client()
+    if not client:
+        return {}
+    for attempt in range(3):
+        try:
+            resp = await client.chat.completions.create(
+                model="deepseek-v4-flash",
+                messages=[{"role": "system", "content": prompt}, *history],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=60,
+                response_format={"type": "json_object"},
+            )
+            raw = resp.choices[0].message.content or ""
+            data = _parse_json_defensive(raw)
+            if not data:
+                logger.warning(f"{label} 第{attempt + 1}次无法解析: {raw[:200]!r}")
+                await asyncio.sleep(0.6)
+                continue
+            return data
+        except Exception as e:
+            logger.error(f"{label} 第{attempt + 1}次失败: {e}")
+            await asyncio.sleep(0.6)
+    return {}
 
 
 async def assess_level(name: str, messages: list[dict], level: int, breadth_left: int, depth_left: int) -> dict:
@@ -131,8 +200,7 @@ async def assess_level(name: str, messages: list[dict], level: int, breadth_left
 
     注意：判定标准是老师讲解的质量（是否模糊/遗漏），不是数字学生自认懂不懂。
     """
-    client = _get_client()
-    if not client:
+    if not _get_client():
         return _assess_fallback(level)
 
     # 只评估老师的讲解质量，不引入学生自己的困惑（防止被学生自报带偏）
@@ -176,33 +244,85 @@ action 含义（数字学生本轮该做的事）：
 - depth_question: 达到 L5 → 主动找边界情况 + 问深度问题（剩余 {depth_left} 个）
 - correction: 发现老师讲错了 → 温和指出 + 用提问引导老师自己发现，不直接否定
 - done: 完全理解 → 总结并建议生成报告"""
-    # DeepSeek 偶发返回空内容，重试 3 次
-    for attempt in range(3):
-        try:
-            resp = await client.chat.completions.create(
-                model="deepseek-v4-flash",
-                messages=[{"role": "system", "content": prompt}, *history],
-                temperature=0.3,
-                max_tokens=512,  # 等级判定只需短 JSON，压小省思考时长
-                timeout=60,
-                response_format={"type": "json_object"},
-            )
-            raw = resp.choices[0].message.content or ""
-            data = _parse_json_defensive(raw)
-            if not data:
-                logger.warning(f"assess_level 第{attempt + 1}次无法解析: {raw[:200]!r}")
-                await asyncio.sleep(0.6)
-                continue
-            return {
-                "level": int(data.get("level", level)),
-                "action": data.get("action", "ask_example"),
-                "blind_spot": str(data.get("blind_spot", "")),
-                "error": str(data.get("error", "")),
-            }
-        except Exception as e:
-            logger.error(f"assess_level 第{attempt + 1}次失败: {e}")
-            await asyncio.sleep(0.6)
-    return _assess_fallback(level)
+    data = await _chat_json(prompt, history, max_tokens=512, temperature=0.3, label="assess_level")
+    if not data:
+        return _assess_fallback(level)
+    return {
+        "level": int(data.get("level", level)),
+        "action": data.get("action", "ask_example"),
+        "blind_spot": str(data.get("blind_spot", "")),
+        "error": str(data.get("error", "")),
+    }
+
+
+# ─── 阶段 A（覆盖度版）：判定讲到哪几个知识点 ──────────────────
+def _coverage_fallback(level: int) -> dict:
+    """AI 不可用：covered=None 表示「判定没跑成」，调用方保持原覆盖集合与等级，
+    绝不能当「一个都没讲对」——曾返回 []，一次 AI 抖动就把已有覆盖清空、等级拉回 L1。"""
+    return {
+        "covered": None,
+        "action": _DEFAULT_ACTION.get(level, "ask_example"),
+        "blind_spot": "",
+        "error": "",
+        "degraded": True,
+    }
+
+
+async def assess_coverage(
+    name: str, messages: list[dict], points: list[dict], level: int, breadth_left: int, depth_left: int
+) -> dict:
+    """判定【到目前为止讲对了哪些知识点】（累计集合）+ 本轮动作。
+
+    等级不在这里定 —— 调用方用 level_from_coverage 从覆盖集合算，
+    覆盖没涨的轮次等级原地不动（D12：判据落在内容推进上）。
+    """
+    if not _get_client():
+        return _coverage_fallback(level)
+
+    history = [{"role": "user", "content": m["content"]} for m in messages if m["role"] == "user"]
+    if not history:
+        history = [{"role": "user", "content": "老师请开始讲课。"}]
+
+    point_list = "\n".join(f"{p['id']}  {p['title']}" for p in points)
+    prompt = f"""你是费曼教学中的「知识点覆盖判定器」。学生正在学习主题「{name}」，老师（用户）在给他讲课。
+
+这个主题的知识点清单（编号是系统发的锚，原样引用，不要改写、不要编新的）：
+{point_list}
+
+请判断：**到目前为止**，老师把哪些知识点讲清楚了。
+
+判定要严，宁可少算：
+- 只是提到名字、一带而过 → 不算讲清楚
+- 要算讲清楚：这个点的核心机制 / 因果 / 怎么用，至少讲对一层
+- 老师讲错的点绝不能算，并把错处写进 "error"
+
+规则：
+- "covered" 是**累计**集合（把之前几轮讲对的也算上），不是本轮新增
+- 只输出清单里出现过的 id，不要编
+- 只核对老师讲的内容，不看学生自己怎么想
+
+只输出 JSON：
+{{"covered": ["1", "2"],
+ "action": "clarify_term|ask_example|breadth_question|restatement|depth_question|done",
+ "blind_spot": "老师讲解里还模糊/遗漏的点（可空）",
+ "error": "老师讲错的地方（可空，没错必须空）"}}
+
+action 含义（数字学生本轮该做的事，当前等级 L{level}）：
+- clarify_term: 还有未解释术语 → 请老师解释
+- ask_example: 缺例子/类比 → 复述 + 要例子
+- breadth_question: 链条有缺环 → 搭逻辑链 + 问广度问题（剩余 {breadth_left} 个）
+- restatement: 结构完整 → 用自己的话重构
+- depth_question: 已覆盖全部知识点 → 主动找边界情况 + 问深度问题（剩余 {depth_left} 个）
+- done: 完全理解 → 总结并建议生成报告"""
+    data = await _chat_json(prompt, history, max_tokens=512, temperature=0.3, label="assess_coverage")
+    if not data or not isinstance(data.get("covered"), list):
+        return _coverage_fallback(level)
+    return {
+        "covered": data["covered"],
+        "action": data.get("action", "ask_example"),
+        "blind_spot": str(data.get("blind_spot", "")),
+        "error": str(data.get("error", "")),
+    }
 
 
 # ─── 阶段 B：按等级流式回复 ───────────────────────────────────
@@ -267,9 +387,13 @@ DEFAULT_SLIDES = [
 ]
 
 
-async def generate_report_slides(name: str, messages: list[dict], level: int, weak_points: list[str] | None = None) -> dict:
+async def generate_report_slides(
+    name: str, messages: list[dict], level: int, weak_points: list[str] | None = None,
+    uncovered: list[str] | None = None,
+) -> dict:
     """生成报告内容：{title, summary, slides: [{title, bullets}], weak_points}"""
     weak_points = weak_points or []
+    uncovered = uncovered or []
     client = _get_client()
     if not client:
         return {"title": name, "summary": "", "slides": DEFAULT_SLIDES, "weak_points": weak_points}
@@ -281,6 +405,8 @@ async def generate_report_slides(name: str, messages: list[dict], level: int, we
     wp_section = ""
     if weak_points:
         wp_section = "\n学习中记录的真实薄弱点（必须体现在报告中）：\n" + "\n".join(f"- {w}" for w in weak_points)
+    if uncovered:
+        wp_section += "\n老师始终没讲到的知识点（必须写进薄弱点，作为下一步）：\n" + "\n".join(f"- {t}" for t in uncovered)
     prompt = f"""你是费曼教学报告生成器。数字学生刚学完了「{name}」这个主题，理解等级 L{level}。
 请根据下面的师生对话，生成一份学习报告。只输出 JSON：
 {{"title": "报告标题", "summary": "三句话总结学到了什么",

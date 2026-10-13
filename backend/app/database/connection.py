@@ -66,6 +66,18 @@ async def init_db():
             pass  # column already exists
         try:
             await conn.execute(text(
+                "ALTER TABLE feynman_topics ADD COLUMN knowledge_points TEXT"
+            ))
+        except OperationalError:
+            pass  # column already exists
+        try:
+            await conn.execute(text(
+                "ALTER TABLE feynman_topics ADD COLUMN covered_points TEXT"
+            ))
+        except OperationalError:
+            pass  # column already exists
+        try:
+            await conn.execute(text(
                 "ALTER TABLE skills ADD COLUMN knowledge_graph TEXT"
             ))
         except OperationalError:

@@ -16,6 +16,8 @@ class FeynmanTopic(Base):
     depth_left = Column(Integer, default=2)  # L5 深度追问预算
     learning_summary = Column(Text, nullable=True)  # JSON：学习摘要（PPT 内容）
     weak_points = Column(Text, nullable=True)  # JSON：薄弱点列表（错误/答不上来累计，进 PPT）
+    knowledge_points = Column(Text, nullable=True)  # JSON：[{id,title}] 点单（建房间时从技能图谱顶层节点冻结）
+    covered_points = Column(Text, nullable=True)  # JSON：["1","1.2"] 累计讲对的知识点 id（等级由它算，D12）
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

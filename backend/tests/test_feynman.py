@@ -30,6 +30,31 @@ def test_clamp_level_at_top():
     assert feynman_service.clamp_level(5, 5) == 5
 
 
+# ─── 纯逻辑：覆盖度判级（D12：等级 = 讲对了几个点，不是说了几句话）──
+def test_level_from_coverage_bands():
+    # 0 个 → L1（讲不等于讲对）；不到一半 → L2；过半 → L3；多半 → L4；全部 → L5
+    assert feynman_service.level_from_coverage(0, 5) == 1
+    assert feynman_service.level_from_coverage(2, 5) == 2
+    assert feynman_service.level_from_coverage(3, 5) == 3
+    assert feynman_service.level_from_coverage(4, 5) == 4
+    assert feynman_service.level_from_coverage(5, 5) == 5
+    assert feynman_service.level_from_coverage(0, 0) == 1  # 没点单 → 调用方走旧路径
+
+
+def test_sanitize_covered_only_known_ids():
+    # 编的 id 清掉、去重、按点单顺序（跟出题 node_id 同一条规矩）
+    points = [{"id": "1", "title": "一"}, {"id": "2", "title": "二"}, {"id": "3", "title": "三"}]
+    assert feynman_service.sanitize_covered(["3", "9.9", "1", "1"], points) == ["1", "3"]
+    assert feynman_service.sanitize_covered("nonsense", points) == []
+    assert feynman_service.sanitize_covered([1, None], points) == []
+
+
+def test_uncovered_titles():
+    points = [{"id": "1", "title": "一"}, {"id": "2", "title": "二"}]
+    assert feynman_service.uncovered_titles(points, ["1"]) == ["二"]
+    assert feynman_service.uncovered_titles(points, ["1", "2"]) == []
+
+
 # ─── 纯逻辑：提问预算 ───────────────────────────────────
 def test_budget_breadth():
     assert feynman_service.apply_budget("breadth_question", 3, 2, 2) == (1, 2)
@@ -307,7 +332,7 @@ async def test_send_message_empty_rejected(client):
 async def test_report_generates_pptx(client, monkeypatch):
     created = (await client.post("/api/feynman/topics", json={"name": "React Hooks"})).json()
 
-    async def fake_report(name, messages, level, weak_points=None):
+    async def fake_report(name, messages, level, weak_points=None, uncovered=None):
         return {
             "title": "React Hooks 学习报告",
             "summary": "学会了状态管理",
@@ -332,3 +357,163 @@ async def test_report_generates_pptx(client, monkeypatch):
 async def test_report_topic_not_found(client):
     resp = await client.post("/api/feynman/topics/99999/report")
     assert resp.status_code == 404
+
+
+# ─── 覆盖度判级（D12）：等级锚在知识点覆盖上 ────────────────
+_POINTS_GRAPH = [{"id": str(i), "title": f"块{i}", "children": []} for i in range(1, 5)]
+
+
+async def _skill_with_graph(client, monkeypatch) -> int:
+    """建一个带图谱的技能（4 个顶层节点），返回 skill_id"""
+    skill_id = (await client.post("/api/skills", json={"name": "TC-FEYN 临时技能", "notes": "测试用"})).json()["id"]
+
+    async def fake_graph(name, notes=""):
+        return {"nodes": _POINTS_GRAPH, "degraded": False, "issues": []}
+
+    monkeypatch.setattr("app.api.skills.generate_knowledge_graph", fake_graph)
+    await client.post(f"/api/skills/{skill_id}/graph")
+    return skill_id
+
+
+@pytest.mark.asyncio
+async def test_coverage_drives_level_and_freezes_without_progress(client, monkeypatch):
+    """TC-FEYN-027: 覆盖没涨的轮次等级原地不动（这就是「每说一句就升一级」的根治点）
+
+    旧实现让 AI 每轮自由提级，实测「用户每说一句就升一级」。现在等级由覆盖集合算：
+    说再多话、一个点都没讲对，等级一动不动；一口气讲全也最多 +1（禁跳级保留）。
+    """
+    skill_id = await _skill_with_graph(client, monkeypatch)
+    created = (await client.post("/api/feynman/topics", json={"skill_id": skill_id, "name": "块"})).json()
+    assert [p["id"] for p in created["knowledge_points"]] == ["1", "2", "3", "4"]
+
+    async def fake_stream(name, messages, level, action, blind_spot, error=""):
+        yield json.dumps({"content": "嗯…", "done": True})
+
+    covered_now = ["1"]
+
+    async def fake_cov(name, messages, points, level, breadth_left, depth_left):
+        return {"covered": covered_now, "action": "ask_example", "blind_spot": "", "error": ""}
+
+    monkeypatch.setattr(feynman_service, "feynman_tutor_stream", fake_stream)
+    monkeypatch.setattr(feynman_service, "assess_coverage", fake_cov)
+    try:
+        # 第 1 轮：讲对 1/4 → L2
+        await _send_message(client, created["id"], "块一是……")
+        detail = (await client.get(f"/api/feynman/topics/{created['id']}")).json()
+        assert detail["level"] == 2
+        assert detail["covered_points"] == ["1"]
+
+        # 第 2 轮：又说了很多，覆盖集合没动 → 等级不动（旧实现这里会 +1）
+        await _send_message(client, created["id"], "再补充一点块一的细节……")
+        detail = (await client.get(f"/api/feynman/topics/{created['id']}")).json()
+        assert detail["level"] == 2
+
+        # 第 3 轮：一口气讲全 4 个点 → 提议 L5，禁跳级 → 最多 +1 到 L3
+        covered_now = ["1", "2", "3", "4"]
+        await _send_message(client, created["id"], "块二块三块四……")
+        detail = (await client.get(f"/api/feynman/topics/{created['id']}")).json()
+        assert detail["level"] == 3
+        assert detail["covered_points"] == ["1", "2", "3", "4"]
+    finally:
+        await client.delete(f"/api/feynman/topics/{created['id']}")
+        await client.delete(f"/api/skills/{skill_id}")
+
+
+@pytest.mark.asyncio
+async def test_topic_without_graph_uses_legacy_leveling(client, monkeypatch):
+    """TC-FEYN-028: 技能没图谱 → 点单为空，退回旧的「AI 提级」路径（老房间一行不改）"""
+    skill_id = (await client.post("/api/skills", json={"name": "TC-FEYN 无图谱", "notes": "测试用"})).json()["id"]
+    created = (await client.post("/api/feynman/topics", json={"skill_id": skill_id, "name": "无图谱"})).json()
+    assert created["knowledge_points"] == []
+
+    async def fake_assess(name, messages, level, breadth_left, depth_left):
+        return {"level": level + 1, "action": "ask_example", "blind_spot": "", "error": ""}
+
+    async def fake_stream(name, messages, level, action, blind_spot, error=""):
+        yield json.dumps({"content": "复述…", "done": True})
+
+    monkeypatch.setattr(feynman_service, "assess_level", fake_assess)
+    monkeypatch.setattr(feynman_service, "feynman_tutor_stream", fake_stream)
+    try:
+        await _send_message(client, created["id"], "讲一点")
+        detail = (await client.get(f"/api/feynman/topics/{created['id']}")).json()
+        assert detail["level"] == 2  # 旧路径照常 +1
+        assert detail["covered_points"] == []
+    finally:
+        await client.delete(f"/api/feynman/topics/{created['id']}")
+        await client.delete(f"/api/skills/{skill_id}")
+
+
+@pytest.mark.asyncio
+async def test_report_carries_uncovered_points(client, monkeypatch):
+    """TC-FEYN-029: 没讲到的知识点进报告薄弱点页 —— 覆盖条上的虚线点最后要落到「下一步」"""
+    skill_id = await _skill_with_graph(client, monkeypatch)
+    created = (await client.post("/api/feynman/topics", json={"skill_id": skill_id, "name": "块"})).json()
+    captured = {}
+
+    async def fake_cov(name, messages, points, level, breadth_left, depth_left):
+        return {"covered": ["1"], "action": "ask_example", "blind_spot": "", "error": ""}
+
+    async def fake_stream(name, messages, level, action, blind_spot, error=""):
+        yield json.dumps({"content": "嗯", "done": True})
+
+    async def fake_report(name, messages, level, weak_points=None, uncovered=None):
+        captured["uncovered"] = uncovered
+        return {"title": "报告", "summary": "", "slides": [], "weak_points": uncovered or []}
+
+    monkeypatch.setattr(feynman_service, "assess_coverage", fake_cov)
+    monkeypatch.setattr(feynman_service, "feynman_tutor_stream", fake_stream)
+    monkeypatch.setattr(feynman_service, "generate_report_slides", fake_report)
+    try:
+        await _send_message(client, created["id"], "只讲了块一")
+        resp = await client.post(f"/api/feynman/topics/{created['id']}/report")
+        assert resp.status_code == 200
+        assert captured["uncovered"] == ["块2", "块3", "块4"]
+    finally:
+        await client.delete(f"/api/feynman/topics/{created['id']}")
+        await client.delete(f"/api/skills/{skill_id}")
+
+
+@pytest.mark.asyncio
+async def test_degraded_assessment_keeps_coverage_level_and_problems(client, monkeypatch):
+    """TC-FEYN-030: AI 判定不可用的轮次：覆盖集合/等级原地不动，未解决问题不被清
+
+    _coverage_fallback 曾返回 covered=[]：一次 AI 抖动就把累计覆盖清空、等级按
+    「0/4 覆盖」拉回去；而且它 error/blind_spot 全空 → 被当成「零卡点」，
+    把未解决问题全自动解决了。
+    """
+    skill_id = await _skill_with_graph(client, monkeypatch)
+    created = (await client.post("/api/feynman/topics", json={"skill_id": skill_id, "name": "块"})).json()
+
+    async def fake_stream(name, messages, level, action, blind_spot, error=""):
+        yield json.dumps({"content": "嗯…", "done": True})
+
+    async def fake_cov_ok(name, messages, points, level, breadth_left, depth_left):
+        return {"covered": ["1"], "action": "ask_example", "blind_spot": "", "error": ""}
+
+    async def fake_cov_degraded(name, messages, points, level, breadth_left, depth_left):
+        return feynman_service._coverage_fallback(level)
+
+    monkeypatch.setattr(feynman_service, "feynman_tutor_stream", fake_stream)
+    monkeypatch.setattr(feynman_service, "assess_coverage", fake_cov_ok)
+    try:
+        # 第 1 轮讲对 1/4 → L2，累计覆盖 ["1"]
+        await _send_message(client, created["id"], "块一是……")
+        detail = (await client.get(f"/api/feynman/topics/{created['id']}")).json()
+        assert detail["level"] == 2
+        assert detail["covered_points"] == ["1"]
+
+        # 留一个未解决问题，等下一轮清理
+        await client.post(f"/api/feynman/topics/{created['id']}/problems", json={"content": "块二说不清"})
+
+        # 第 2 轮 AI 判定挂了：服务层走兜底（covered=None + degraded）
+        monkeypatch.setattr(feynman_service, "assess_coverage", fake_cov_degraded)
+        await _send_message(client, created["id"], "再讲块一……")
+
+        detail = (await client.get(f"/api/feynman/topics/{created['id']}")).json()
+        assert detail["covered_points"] == ["1"]  # 累计覆盖没被清
+        assert detail["level"] == 2  # 等级没被「0/4 覆盖」拉回
+        assert detail["problems"][0]["status"] == "open"  # 未解决问题没被当零卡点清掉
+    finally:
+        await client.delete(f"/api/feynman/topics/{created['id']}")
+        await client.delete(f"/api/skills/{skill_id}")

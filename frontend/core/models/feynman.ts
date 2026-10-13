@@ -17,6 +17,11 @@ export interface FeynmanProblem {
   resolved_at: string | null;
 }
 
+export interface FeynmanPoint {
+  id: string;
+  title: string;
+}
+
 export interface FeynmanTopic {
   id: number;
   skill_id: number | null;
@@ -27,6 +32,8 @@ export interface FeynmanTopic {
   depth_left: number;
   learning_summary: Record<string, unknown> | null;
   weak_points: string[];
+  knowledge_points: FeynmanPoint[]; // 点单（图谱顶层节点），空 = 没图谱、等级走旧路径
+  covered_points: string[]; // 累计讲对的点 id
   problems: FeynmanProblem[];
   created_at: string;
   updated_at: string;

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import tempfile
 
@@ -24,6 +25,8 @@ from app.services import feynman as feynman_service
 
 router = APIRouter(prefix="/api/feynman", tags=["feynman"])
 
+logger = logging.getLogger(__name__)
+
 
 def _problem_to_dict(p: FeynmanProblem) -> dict:
     return {
@@ -48,6 +51,8 @@ def _topic_to_dict(t: FeynmanTopic) -> dict:
         "depth_left": t.depth_left,
         "learning_summary": json.loads(t.learning_summary) if t.learning_summary else None,
         "weak_points": json.loads(t.weak_points) if t.weak_points else [],
+        "knowledge_points": json.loads(t.knowledge_points) if t.knowledge_points else [],
+        "covered_points": json.loads(t.covered_points) if t.covered_points else [],
         "created_at": t.created_at,
         "updated_at": t.updated_at,
     }
@@ -90,6 +95,11 @@ def _msg_to_dict(m: FeynmanMessage) -> dict:
     }
 
 
+def _points_of(topic: FeynmanTopic) -> list[dict]:
+    """房间的点单（图谱顶层节点，建房间时冻结）。空 = 没图谱 → 走旧判级路径。"""
+    return json.loads(topic.knowledge_points) if topic.knowledge_points else []
+
+
 async def _load_topic(topic_id: int, db: AsyncSession) -> FeynmanTopic:
     result = await db.execute(select(FeynmanTopic).where(FeynmanTopic.id == topic_id))
     topic = result.scalar_one_or_none()
@@ -113,13 +123,28 @@ async def create_topic(data: CreateTopicRequest, db: AsyncSession = Depends(get_
     if not name:
         raise HTTPException(status_code=400, detail="主题名不能为空")
 
+    # 点单：技能图谱的顶层节点，建房间时冻结成判级的锚（D12）
+    points: list[dict] = []
     if data.skill_id:
         result = await db.execute(select(Skill).where(Skill.id == data.skill_id))
         skill = result.scalar_one_or_none()
         if not skill:
             raise HTTPException(status_code=404, detail="技能不存在")
+        if skill.knowledge_graph:
+            try:
+                nodes = json.loads(skill.knowledge_graph)["nodes"]
+                points = [
+                    {"id": n["id"], "title": n["title"]}
+                    for n in nodes
+                    if isinstance(n, dict) and n.get("id")
+                ]
+            except Exception as e:
+                logger.warning(f"费曼房间取图谱点单失败，按无点单降级: {e}")
 
-    topic = FeynmanTopic(skill_id=data.skill_id, name=name, level=1, status="learning", breadth_left=2, depth_left=2)
+    topic = FeynmanTopic(
+        skill_id=data.skill_id, name=name, level=1, status="learning", breadth_left=2, depth_left=2,
+        knowledge_points=json.dumps(points, ensure_ascii=False) if points else None,
+    )
     db.add(topic)
     await db.commit()
     await db.refresh(topic)
@@ -172,24 +197,48 @@ async def send_message(topic_id: int, data: MessageRequest, db: AsyncSession = D
 
     # 阶段 A：定级 + 状态更新（在 endpoint 内完成，session 生命周期确定；StreamingResponse 的
     # generator 里改 ORM 对象 + commit 在真实服务器上有不持久化的坑，所以前置到这里）
-    assessed = await feynman_service.assess_level(
-        topic.name, history, topic.level, topic.breadth_left, topic.depth_left
-    )
+    points = _points_of(topic)
+    prev_covered = json.loads(topic.covered_points) if topic.covered_points else []
+    covered = None
+    if points:
+        # 有图谱点单：等级由覆盖度算（D12）
+        assessed = await feynman_service.assess_coverage(
+            topic.name, history, points, topic.level, topic.breadth_left, topic.depth_left
+        )
+        raw_covered = assessed.get("covered")
+        # covered 不是 list = 判定没跑成（AI 不可用/响应缺字段）：保持原覆盖集合与等级，不写库
+        covered = feynman_service.sanitize_covered(raw_covered, points) if isinstance(raw_covered, list) else None
+    else:
+        assessed = await feynman_service.assess_level(
+            topic.name, history, topic.level, topic.breadth_left, topic.depth_left
+        )
     error = str(assessed.get("error", "")).strip()
 
     if error:
         # 发现老师讲错 → 强制降一级 + correction 动作（温和纠正），不消耗提问预算
         new_level = max(1, topic.level - 1)
         action = "correction"
+    elif covered is not None:
+        # 覆盖集合没动的轮次等级原地不动 —— 判据落在内容推进上，不在发言轮次上
+        proposal = feynman_service.level_from_coverage(len(covered), len(points))
+        new_level = (
+            feynman_service.clamp_level(proposal, topic.level) if set(covered) != set(prev_covered) else topic.level
+        )
+        action = feynman_service.resolve_action(
+            new_level, assessed.get("action", "ask_example"), topic.breadth_left, topic.depth_left
+        )
     else:
         new_level = feynman_service.clamp_level(int(assessed.get("level", topic.level)), topic.level)
         action = feynman_service.resolve_action(
             new_level, assessed.get("action", "ask_example"), topic.breadth_left, topic.depth_left
         )
     blind_spot = str(assessed.get("blind_spot", ""))
+    if covered is not None:
+        topic.covered_points = json.dumps(covered, ensure_ascii=False)
 
-    # 问题跟踪：AI 零卡点（无讲错、无盲点）→ 自动解决未解决问题（非破坏式，可手动重开）
-    if not error and not blind_spot.strip():
+    # 问题跟踪：AI 零卡点（无讲错、无盲点）→ 自动解决未解决问题（非破坏式，可手动重开）。
+    # degraded 轮次（判定没跑成）不算零卡点 —— 否则 AI 一挂就把未解决问题全清了
+    if not assessed.get("degraded") and not error and not blind_spot.strip():
         await _resolve_all_open(topic_id, db)
 
     b, d = feynman_service.apply_budget(action, new_level, topic.breadth_left, topic.depth_left)
@@ -284,11 +333,15 @@ async def generate_report(topic_id: int, db: AsyncSession = Depends(get_db)):
     topic = await _load_topic(topic_id, db)
     messages = [_msg_to_dict(m) for m in await _load_messages(topic_id, db)]
 
+    # 一直没讲到的知识点进报告薄弱点页（覆盖条上那些虚线点，最后要落到「下一步」）
+    points = _points_of(topic)
+    covered = json.loads(topic.covered_points) if topic.covered_points else []
     report = await feynman_service.generate_report_slides(
         topic.name,
         [{"role": m["role"], "content": m["content"]} for m in messages],
         topic.level,
         json.loads(topic.weak_points) if topic.weak_points else [],
+        feynman_service.uncovered_titles(points, covered),
     )
 
     tmpdir = tempfile.gettempdir()

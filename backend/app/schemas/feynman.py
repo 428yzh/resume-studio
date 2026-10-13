@@ -32,6 +32,11 @@ class FeynmanProblemResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FeynmanPoint(BaseModel):
+    id: str
+    title: str
+
+
 class FeynmanMessageResponse(BaseModel):
     id: int
     role: str  # user / ai
@@ -53,6 +58,8 @@ class FeynmanTopicResponse(BaseModel):
     depth_left: int = 2
     learning_summary: Optional[dict] = None
     weak_points: list[str] = []
+    knowledge_points: list[FeynmanPoint] = []  # 点单（图谱顶层节点），空 = 没图谱、走旧判级
+    covered_points: list[str] = []  # 累计讲对的点 id（前端画覆盖条）
     problems: list[FeynmanProblemResponse] = []
     created_at: datetime
     updated_at: datetime
