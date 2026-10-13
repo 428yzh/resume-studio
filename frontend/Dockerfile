@@ -3,7 +3,8 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
+# 必须连 package-lock.json 一起 COPY，npm ci 只认锁文件（只拷 package.json 会报 EUSAGE）
+COPY package*.json ./
 RUN npm ci
 
 COPY . .
