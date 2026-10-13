@@ -678,6 +678,7 @@ curl -s http://localhost:8001/api/resumes | python -c "import json,sys; [print(r
 | 14 | 费曼 **AI 抖动一轮就清空累计覆盖 + 等级被「0/4 覆盖」拉回 + 未解决问题被批量自动解决** | `_coverage_fallback` 返回 `covered: []`，把「没判成」当成「一个都没讲对」；且兜底 error/blind_spot 全空 → 被「零卡点 → 自动解决」当成讲全了 | 兜底改 `covered: None` + `degraded: True` 哨兵；端点见非 list 的 covered 保持原覆盖/等级、不写库；degraded 轮不触发自动解决；响应缺 covered 字段同样按兜底（TC-FEYN-030） |
 | 15 | 费曼房间**流式态永不复位**：流结束没收到 done 帧（连接掐断/帧丢失）房间永久卡在 `isStreaming=true`，下一条消息再也发不出去 | `feynmanStore.sendMessage` 只在 done 分支 / catch 复位，while 循环正常退出（EOF）没有收尾 | 循环后补 settle：仍流式才复位，半截回复留成 AI 消息（同问一问的半截不丢；TC-STORE-FEYN-005 新增用例） |
 | 16 | 交卷时问答题 AI 评分异常**存 `ai_score=0`**（把「没评到」冒充成「判了 0 分」，破坏未测≠0）；多选题 `correct_answer` 在生成 prompt 里**连返回示例都没有**，判分 `set(split(","))` 对空格敏感 | 评分 except 分支写死 0；返回格式只给了 single_choice + essay 两个例子 | except 存 `None`（前端三处 `?? undefined`/`!= null`/`\|\|` 已天然兜住 null）；prompt 补 multi_choice 示例 +「英文逗号无空格」约束；判分按选项字母 strip 归一化（TC-SCORE-013/014） |
+| 17 | **全新部署（Docker 空数据卷）新建简历的模板下拉为空** —— 上线首日用户点到 | `seed_templates()` 全仓无调用者（`init_db()` 只建表不填数据），本地库里那 3 个模板是当年手动跑 `python -m app.seed` 的残留；Docker 全新卷建的是空表 → `GET /api/templates` 返回 `[]` | `lifespan` 在 `init_db()` 后补 `await seed_templates()`（幂等，只空库插）；全新临时库实测自动补齐 3 套模板 |
 
 **📋 功能缺口**
 

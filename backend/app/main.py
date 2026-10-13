@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database.connection import init_db
+from app.seed import seed_templates
 from app.api.health import router as health_router
 from app.api.resumes import router as resume_router
 from app.api.templates import router as template_router
@@ -28,6 +29,7 @@ if not _ai_logger.handlers:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await seed_templates()  # 空库补齐 3 套模板（幂等）；Docker 全新卷首次启动就靠它
     await load_ai_overrides()  # 界面里配过的 key/地址/模型覆盖 .env；表由 init_db 刚建好
     yield
 
