@@ -2,12 +2,16 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { api } from "@core/api/client";
 import FloatingNote from "./FloatingNote";
 import HighlightableMarkdown from "./HighlightableMarkdown";
+import MarkdownContent from "./MarkdownContent";
 import { contentHighlightKey } from "@core/services/highlights";
 import { isUnavailable } from "@core/services/aiDegrade";
 import { findCornell, loadCornellFromStorage } from "@core/services/scoring";
 import { useSkillStore } from "@core/stores/skillStore";
-import type { GraphNode } from "@core/models/skill";
+import { useChatStore, chatRoomKey } from "@core/stores/chatStore";
+import { type GraphNode } from "@core/models/skill";
 import AIErrorBox from "./AIErrorBox";
+import LoadingDots from "./LoadingDots";
+import ElapsedTime from "./ElapsedTime";
 
 interface StepData {
   title: string;
@@ -117,6 +121,7 @@ export default function LearningPanel({
   /* ── AI explanation (cached) ── */
   const [explanation, setExplanation] = useState("");
   const [explanationLoading, setExplanationLoading] = useState(false);
+  const [explanationStartedAt, setExplanationStartedAt] = useState<number | null>(null);
   const [explanationError, setExplanationError] = useState("");
 
   /* ── Topic Q&A (cached) ── */
@@ -144,6 +149,10 @@ export default function LearningPanel({
   const [prompts, setPrompts] = useState<string[]>([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [cornell, setCornell] = useState<CornellData>({ cues: [], notes: "", summary: "" });
+
+  /* ── 问一问（结论 5）：抽屉开关与输入框。会话本身在 chatStore（每单元一条，结论 4） ── */
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
 
   /* ── Floating note ── */
   const [showFloatingNote, setShowFloatingNote] = useState(false);
@@ -177,10 +186,46 @@ export default function LearningPanel({
   /* ── Save timer ── */
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 笔记存服务端（不再进 localStorage）：留在浏览器里，服务端拿不到原文，复盘（⑤）就无从谈起
+  // 笔记存服务端（不再进 localStorage）：留在浏览器里，服务端拿不到原文，问一问（结论 5）就无从谈起
   const saveCornell = useCallback((data: CornellData) => {
-    saveNote(skillId, unitKey, JSON.stringify(data)).catch(() => { /* 自动保存失败不打断，下次改动再存 */ });
+    // 返回 promise：问一问发起前要先 flush —— 自动保存有 400ms 防抖，刚敲完就问会读到上一版
+    return saveNote(skillId, unitKey, JSON.stringify(data)).catch(() => { /* 自动保存失败不打断，下次改动再存 */ });
   }, [skillId, unitKey, saveNote]);
+
+  /* ── 问一问：本单元这条会话。服务端无状态，每轮现拼语境（结论 10） ── */
+  const chatKey = chatRoomKey(skillId, unitKey);
+  const chatRoom = useChatStore((s) => s.rooms[chatKey]);
+  const openChat = useChatStore((s) => s.open);
+  const askChat = useChatStore((s) => s.ask);
+  const retryChat = useChatStore((s) => s.retry);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // 入口两态（结论 15/16）：没开过 → 先 flush 笔记再开场；开过 → 只展开抽屉，零请求
+  const handleOpenChat = async () => {
+    setChatOpen(true);
+    if (chatRoom?.opened || chatRoom?.streaming) return;
+    await saveCornell(cornell);
+    await openChat(skillId, unitKey);
+  };
+
+  const sendChat = async (text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setChatInput("");
+    await saveCornell(cornell);
+    await askChat(skillId, unitKey, t);
+  };
+
+  const retryChatTurn = async () => {
+    await saveCornell(cornell);
+    await retryChat(skillId, unitKey);
+  };
+
+  // 流式收字时贴着底部滚
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (chatOpen && el) el.scrollTop = el.scrollHeight;
+  }, [chatOpen, chatRoom?.messages, chatRoom?.streaming]);
 
   /* ── Mount / unmount animation ── */
   useEffect(() => {
@@ -281,6 +326,10 @@ export default function LearningPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  /* 问一问入口只在有笔记时出现：空笔记不值得烧一次 AI 调用（结论 7） */
+  const noteHasContent =
+    cornell.cues.some((c) => c?.trim()) || !!cornell.notes.trim() || !!cornell.summary.trim();
+
   /* ── Ask topic ── */
   const askTopic = (topic: string, nodeId?: string) => {
     setActiveTopic(topic);
@@ -334,6 +383,7 @@ export default function LearningPanel({
     if (explanationFetching.current?.stepKey === stepKey) return;
     explanationFetching.current = { stepKey };
     setExplanationLoading(true);
+    setExplanationStartedAt(Date.now());
     setExplanationError("");
     api.post<{ explanation: string; topic_keywords?: string[] }>("/api/ai/explain-topic", {
       skill_name: skillName,
@@ -516,7 +566,7 @@ export default function LearningPanel({
                   </div>
                   <p className="text-xs text-muted flex items-center gap-1.5">
                     <span className="inline-block w-1.5 h-1.5 bg-blue rounded-full animate-pulse" />
-                    AI 生成中，可收起面板后台等待，完成后自动显示
+                    AI 正在生成并自检 · <ElapsedTime startedAt={explanationStartedAt} /> · 可收起面板后台等待，完成后自动显示
                   </p>
                 </div>
               )}
@@ -769,16 +819,112 @@ export default function LearningPanel({
                 />
               </div>
 
-              <p className="text-xs text-muted/60 mt-2">
-                ✎ 笔记已自动保存
-                {cornell.cues.some((c) => c?.trim()) && ` · 线索 ${cornell.cues.filter((c) => c?.trim()).length} 条`}
-                {cornell.notes.trim() && ` · 笔记 ${cornell.notes.length} 字`}
-                {cornell.summary.trim() && ` · 总结 ${cornell.summary.length} 字`}
-              </p>
+              <div className="mt-3">
+                <p className="text-xs text-muted/60">
+                  ✎ 笔记已自动保存
+                  {cornell.cues.some((c) => c?.trim()) && ` · 线索 ${cornell.cues.filter((c) => c?.trim()).length} 条`}
+                  {cornell.notes.trim() && ` · 笔记 ${cornell.notes.length} 字`}
+                  {cornell.summary.trim() && ` · 总结 ${cornell.summary.length} 字`}
+                </p>
+              </div>
             </section>
           </div>
         </div>
       </div>
+
+      {/* 问一问：悬浮圆按钮 —— 学习面板里随处可开，不必滚到底部找入口。
+          有笔记才出现：空笔记不值得烧一次 AI 调用（结论 7）；抽屉开着时收起 */}
+      {visible && !chatOpen && noteHasContent && (
+        <button
+          onClick={() => void handleOpenChat()}
+          aria-label="问一问"
+          title="问一问 · 聊聊这块笔记"
+          className="fixed bottom-6 right-6 z-50 w-16 h-16 rounded-full bg-blue text-white text-sm font-semibold shadow-lg flex items-center justify-center pointer-events-auto hover:bg-blue/90 hover:scale-105 active:scale-95 transition-transform"
+        >
+          问一问
+        </button>
+      )}
+
+      {/* 问一问抽屉：从右侧盖在学习面板上。开场 = 它先读一遍笔记（轻点评 + 指不足），
+          之后就是聊天。不判分、不落库；对话只活在内存里（结论 3/27） */}
+      {chatOpen && (
+        <div
+          className="fixed right-0 top-14 h-[calc(100vh-3.5rem)] w-[440px] max-w-[92vw] z-[60] bg-canvas border-l border-hairline shadow-[-8px_0_40px_rgba(0,0,0,0.08)] flex flex-col pointer-events-auto"
+          data-testid="notes-chat"
+        >
+          <div className="flex items-center justify-between gap-2 px-5 py-4 border-b border-hairline shrink-0">
+            <h3 className="text-sm font-semibold text-ink">问一问</h3>
+            <button
+              onClick={() => setChatOpen(false)}
+              aria-label="关闭"
+              className="text-muted hover:text-ink transition-colors text-xl leading-none shrink-0"
+            >
+              ×
+            </button>
+          </div>
+
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+            {chatRoom?.messages.length ? (
+              <>
+                {chatRoom.messages.map((m, i) =>
+                  m.role === "ai" && !m.content ? (
+                    chatRoom.streaming ? (
+                      <div key={i} className="flex justify-start">
+                        <div className="rounded-2xl rounded-tl-sm bg-surface border border-hairline px-3.5 py-2.5">
+                          <LoadingDots label="" />
+                        </div>
+                      </div>
+                    ) : null
+                  ) : (
+                    <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 ${
+                          m.role === "user"
+                            ? "bg-blue text-white rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap"
+                            : "bg-surface text-charcoal border border-hairline rounded-tl-sm"
+                        }`}
+                      >
+                        {m.role === "user" ? m.content : <MarkdownContent content={m.content} />}
+                      </div>
+                    </div>
+                  )
+                )}
+                {/* 中途失败：半截文字留着，错误在下面单独给（结论 19） */}
+                {chatRoom.error && <AIErrorBox message={chatRoom.error} onRetry={retryChatTurn} retryLabel="重试" />}
+              </>
+            ) : chatRoom?.error ? (
+              <AIErrorBox message={chatRoom.error} onRetry={retryChatTurn} retryLabel="再试一次" />
+            ) : (
+              <LoadingDots label="正在读你的笔记..." />
+            )}
+          </div>
+
+          <div className="border-t border-hairline px-4 py-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void sendChat(chatInput);
+                  }
+                }}
+                disabled={!chatRoom?.opened || chatRoom.streaming}
+                placeholder={chatRoom?.opened ? "问它点什么…" : "等它读完笔记…"}
+                className="flex-1 bg-canvas border border-hairline rounded-lg px-3 py-2 text-sm outline-none focus:border-blue disabled:opacity-50"
+              />
+              <button
+                onClick={() => void sendChat(chatInput)}
+                disabled={!chatRoom?.opened || chatRoom.streaming || !chatInput.trim()}
+                className="shrink-0 bg-blue text-white rounded-full px-4 py-2 text-sm font-semibold hover:bg-blue/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                发送
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showFloatingNote && (
         <FloatingNote storageKey={stickyKey} onClose={() => setShowFloatingNote(false)} />

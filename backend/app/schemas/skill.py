@@ -99,6 +99,17 @@ class SkillNoteResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NoteChatMessage(BaseModel):
+    role: str  # "user" / "ai"
+    content: str = ""
+
+
+class NoteChatRequest(BaseModel):
+    """messages: [] = 开场（打开会话时先让 AI 读一遍这块笔记）"""
+    unit_key: str
+    messages: list[NoteChatMessage] = []
+
+
 class InterviewQuestionResponse(BaseModel):
     id: int
     skill_id: int

@@ -2,6 +2,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,9 +13,12 @@ from app.schemas.skill import (
     SkillCreate, SkillUpdate, SkillResponse,
     LearningResourceCreate, LearningResourceUpdate, LearningResourceResponse,
     InterviewQuestionCreate, InterviewQuestionUpdate, InterviewQuestionResponse,
-    SkillNoteUpsert, SkillNoteResponse,
+    SkillNoteUpsert, SkillNoteResponse, NoteChatRequest,
 )
-from app.services.ai_service import generate_learning_plan, generate_knowledge_graph
+from app.services.ai_service import (
+    generate_learning_plan, generate_knowledge_graph,
+    notes_chat_stream, _find_nodes, _render_graph_for_prompt,
+)
 from app.services.scoring import compute_scores
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -135,6 +139,43 @@ async def upsert_note(skill_id: int, data: SkillNoteUpsert, db: AsyncSession = D
     await db.commit()
     await db.refresh(note)
     return note
+
+
+@router.post("/{skill_id}/notes/chat")
+async def chat_note(skill_id: int, data: NoteChatRequest, db: AsyncSession = Depends(get_db)):
+    """问一问（结论 5）：读这块笔记 → 轻点评 + 指不足，然后接着聊 —— 不是判分（结论 27）。
+
+    messages: [] = 开场。服务端无状态：语境每次现拼（技能备注 + 这块图谱 + 最新笔记原文，结论 10）。
+    内容边界取这块图谱（unit_key 就是节点 id）；老计划 `step{n}` 没有图谱，按技能整体聊。
+    """
+    skill = (await db.execute(select(Skill).where(Skill.id == skill_id))).scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="技能不存在")
+
+    note = (await db.execute(
+        select(SkillNote).where(SkillNote.skill_id == skill_id, SkillNote.unit_key == data.unit_key)
+    )).scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=400, detail="这块还没有笔记")
+
+    # 图谱是 Text 列存的 {nodes, degraded, issues} JSON 串（同 ai.py 取块那条），不是 JSON 列
+    block: list = []
+    if skill.knowledge_graph:
+        try:
+            block = _find_nodes(json.loads(skill.knowledge_graph)["nodes"], set(data.unit_key.split(",")))
+        except Exception as e:
+            logger.warning(f"问一问取图谱块失败，按无块降级: {e}")
+
+    async def event_stream():
+        # 服务层只吐裸 JSON，SSE 帧由路由层包（同 feynman/mock-interview）
+        async for chunk in notes_chat_stream(
+            skill.name, skill.notes or "", note.cornell,
+            _render_graph_for_prompt(block) if block else "",
+            [m.model_dump() for m in data.messages],
+        ):
+            yield f"data: {chunk}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/{skill_id}/questions", response_model=list[InterviewQuestionResponse])

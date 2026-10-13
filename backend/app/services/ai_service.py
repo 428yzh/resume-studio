@@ -1491,6 +1491,97 @@ async def generate_quiz_questions(
         return _default_quiz_questions(mode, counts)
 
 
+def _render_cornell(cornell: str) -> str:
+    """笔记是 {cues, notes, summary} 的 JSON 串，拆成三栏给 AI 读。
+
+    原样丢一串 JSON 模型也能读，但 Cornell 的三栏各有各的角色（线索是问题、笔记是内容、
+    总结是收敛），摊平了它才好对着判「哪栏在糊弄」。解不开就原样给，别把内容丢了。
+    """
+    try:
+        d = json.loads(cornell)
+        cues = [c for c in (d.get("cues") or []) if isinstance(c, str) and c.strip()]
+        parts = []
+        if cues:
+            parts.append("【线索栏】\n" + "\n".join(f"- {c}" for c in cues))
+        if str(d.get("notes") or "").strip():
+            parts.append(f"【笔记栏】\n{d['notes']}")
+        if str(d.get("summary") or "").strip():
+            parts.append(f"【总结栏】\n{d['summary']}")
+        return "\n\n".join(parts) if parts else cornell
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return cornell
+
+
+_NOTES_CHAT_PROMPT = """你是「问一问」—— 用户学习笔记的对话伙伴。用户在一个学习单元里写了 Cornell 笔记（线索 / 笔记 / 总结三栏），你的工作是先读懂他，然后陪他聊。
+
+对话历史为空（开场）：读一遍笔记，做一段**简短**的开场 —— 先用一两句复述你读到的他的思路，再指出明显没说到、没想清楚的地方。开场要短，别写小作文、别罗列成报告、别客套。
+
+有来有回之后：就当普通聊天接话，始终结合语境里的笔记和【内容边界】。
+
+规矩：
+- 笔记可能还没写完 —— 按现状读，别催他补全。
+- 不判分、不给等级、不宣布「通过」。你不是考官。
+- 没发现明显缺口就别硬凑：说一句这块记得比较完整，然后给两个出口 —— ① 换个角度让他再讲两句 ② 去费曼房间把这块讲一遍。
+- 【内容边界】里的 id 可以引用（说清是哪个知识点没被提到），但别把回话写成清单。
+- 只说中文。"""
+
+# 对话历史最多带这么多条（10 轮）。再往前的靠笔记本身承载 —— 语境是笔记，不是聊天记录（结论 10）
+_CHAT_HISTORY_LIMIT = 20
+
+
+async def notes_chat_stream(
+    skill_name: str, skill_notes: str, cornell: str, graph_block: str = "", messages: list[dict] | None = None
+) -> AsyncGenerator[str, None]:
+    """问一问（结论 5）：读这块笔记 → 轻点评 + 指不足，然后接着聊。
+
+    messages 是前端给的对话历史（[{role: "user"|"ai", content}]），[] = 开场。
+    语境每次请求现拼（技能备注 + 这块图谱 + 最新笔记原文），服务端不存会话 —— 无状态（结论 4/10）。
+    不判分、不落库（结论 27）。事件：{content, done} 逐字块，失败在收尾事件带 error。
+    """
+    client = _get_client()
+    if not client:
+        yield json.dumps({"content": "", "done": True, "error": "AI 服务未配置，请设置 DEEPSEEK_API_KEY"})
+        return
+
+    # 语境只取备注，不带 category —— 同 quiz.py::_skill_context()
+    context = f"{skill_name}（{skill_notes}）" if skill_notes.strip() else skill_name
+    block_section = (
+        f"【内容边界】这块笔记对应的知识点（id 是它在图谱里的位置）\n{graph_block}"
+        if graph_block
+        else "【内容边界】（这个单元还没有图谱，按技能整体聊）"
+    )
+    system_prompt = (
+        f"{_NOTES_CHAT_PROMPT}\n\n【语境】\n技能：{context}\n\n"
+        f"{block_section}\n\n【笔记原文】\n{_render_cornell(cornell)}"
+    )
+
+    history = [
+        {"role": "assistant" if m.get("role") == "ai" else "user", "content": m.get("content") or ""}
+        for m in (messages or [])
+    ][-_CHAT_HISTORY_LIMIT:]
+    if not history:
+        history.append({"role": "user", "content": "（请先读一遍这份笔记，做简短的开场点评）"})
+
+    try:
+        stream = await client.chat.completions.create(
+            model="deepseek-v4-flash",
+            messages=[{"role": "system", "content": system_prompt}, *history],
+            temperature=0.7,
+            # 推理模型的思考也吃预算：2000 会被烧穿返回空（2026-10-10 实证），直接给 4096
+            max_tokens=4096,
+            timeout=120,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                yield json.dumps({"content": delta.content, "done": False})
+        yield json.dumps({"content": "", "done": True})
+    except Exception as e:
+        logger.error(f"notes_chat_stream 失败: {e}")
+        yield json.dumps({"content": "", "done": True, "error": f"AI 回复失败: {str(e)}"})
+
+
 async def grade_essay_answer(question: str, user_answer: str, reference_answer: str) -> dict:
     """AI 评阅问答题"""
     client = _get_client()
